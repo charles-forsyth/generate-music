@@ -43,8 +43,10 @@ class SmartAssistant:
             contents = (
                 "You are an expert music producer. Rewrite the following user request "
                 "into a detailed, high-quality music generation prompt for the Lyria "
-                "model. Focus on instruments, mood, tempo, genre, and texture. "
-                f"Output ONLY the rewritten prompt.\n\nUser Request: '{prompt}'"
+                "model. IMPORTANT: The model is INSTRUMENTAL ONLY. Do NOT ask for "
+                "vocals, lyrics, singing, or voice. Focus on instruments, mood, "
+                "tempo, genre, and texture. Output ONLY the rewritten prompt.\n\n"
+                f"User Request: '{prompt}'"
             )
             response = await self.client.aio.models.generate_content(
                 model=self.model_id,
