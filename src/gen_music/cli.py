@@ -10,17 +10,13 @@ import warnings
 from datetime import datetime
 from pathlib import Path
 
-# Suppress pydub SyntaxWarnings in Python 3.12+
+# Suppress warnings
 warnings.filterwarnings("ignore", category=SyntaxWarning, module="pydub")
+warnings.filterwarnings("ignore", module="google.genai")
 
 # ruff: noqa: E402
-from rich.console import Console
-
 from .core import MusicGenerator
 from .utils import add_to_history, convert_audio, load_history, play_audio
-
-# Create console for stderr (logs/status)
-console = Console(stderr=True)
 
 # Global state for cleanup
 CURRENT_OUTPUT_FILE = None
@@ -35,7 +31,6 @@ def cleanup_handler():
     if not CURRENT_OUTPUT_FILE or not os.path.exists(CURRENT_OUTPUT_FILE):
         return
 
-    # Delete if it's a temp run OR if generation was interrupted (partial file)
     if IS_TEMP_MODE or not GENERATION_COMPLETE:
         try:
             os.remove(CURRENT_OUTPUT_FILE)
@@ -102,7 +97,6 @@ async def async_main(args):
     """Async entry point for the CLI logic."""
     global CURRENT_OUTPUT_FILE, IS_TEMP_MODE, GENERATION_COMPLETE
 
-    # Initialize Generator inside the loop
     try:
         generator = MusicGenerator()
     except Exception as e:
@@ -118,11 +112,10 @@ async def async_main(args):
             prompt = args.prompt or "ambient electronic"
             
             if args.optimize:
-                sys.stderr.write("Optimizing Live DJ prompt...\n")
                 try:
                     prompt = await generator.smart.optimize_prompt(prompt)
-                except Exception as e:
-                    sys.stderr.write(f"Optimization failed: {e}\n")
+                except Exception:
+                    pass
 
             dj = LiveDJ(generator)
             await dj.start_session(initial_prompt=prompt)
@@ -151,20 +144,19 @@ async def async_main(args):
             sys.exit(1)
         entry = history[args.rerun - 1]
         prompt = entry.get("prompt")
-        sys.stderr.write(f"Rerunning history item {args.rerun}: '{prompt}'\n")
+        # Status silenced
 
     if not prompt:
         sys.stderr.write("Error: No prompt provided via argument or pipe.\n")
         sys.exit(1)
 
-    # Smart Prompt Optimization
+    # Smart Prompt Optimization (Silent)
     final_prompt = prompt
     if args.optimize:
-        sys.stderr.write("Optimizing prompt with Gemini...\n")
         try:
             final_prompt = await generator.smart.optimize_prompt(prompt)
-        except Exception as e:
-            sys.stderr.write(f"Optimization failed, using original: {e}\n")
+        except Exception:
+            pass
 
     # Determine Output Filename
     if args.temp:
@@ -182,14 +174,12 @@ async def async_main(args):
             try:
                 slug = await generator.smart.generate_filename_slug(final_prompt)
             except Exception:
-                # Debug logging if needed, or just silent fallback
                 slug = "generated_music"
                 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_file = os.path.join(output_dir, f"{slug}_{timestamp}.wav")
 
     CURRENT_OUTPUT_FILE = output_file
-    sys.stderr.write("Generating music...\n")
     
     # Generate
     try:
@@ -207,7 +197,6 @@ async def async_main(args):
     # Convert
     final_output = output_file
     if args.format == "mp3":
-        sys.stderr.write("Converting to mp3...\n")
         final_output = convert_audio(output_file, "mp3")
         if IS_TEMP_MODE or not GENERATION_COMPLETE:
              if output_file != final_output and os.path.exists(output_file):
@@ -227,6 +216,7 @@ async def async_main(args):
             }
         )
 
+    # Only print filename to stdout
     print(os.path.basename(final_output))
 
     if args.play:
@@ -296,7 +286,7 @@ def main():
         cmd = [sys.executable, "-m", "gen_music.cli"] + [
             arg for arg in sys.argv[1:] if arg not in ("-b", "--background")
         ]
-        sys.stderr.write("Launching generation in background...\n")
+        # Silent launch
         subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,
@@ -309,7 +299,6 @@ def main():
     try:
         asyncio.run(async_main(args))
     except KeyboardInterrupt:
-        # Handled by signal handler, but just in case
         sys.exit(0)
 
 

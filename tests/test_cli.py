@@ -59,8 +59,9 @@ def test_generate_command(mock_generator, mock_convert, clean_history, capsys):
     captured = capsys.readouterr()
     assert "converted.mp3" in captured.out
     
-    # Status messages should be in stderr
-    assert "Generating music..." in captured.err
+    # Status messages are now removed/silenced in stderr too for standard run?
+    # CLI code removed explicit status prints.
+    assert "Generating music..." not in captured.err
 
 def test_mp3_default(mock_generator, mock_convert, clean_history):
     exit_code = run_cli(["test prompt"])

@@ -33,13 +33,13 @@ class LiveDJ:
         self.current_prompts = [types.WeightedPrompt(text=initial_prompt, weight=1.0)]
         self.playback_started.clear()
         
-        # Simplified Text UI
+        # Simple Text UI
         print("\n=== Gen-Music Live DJ Console ===")
         print(f"Initial Prompt: {initial_prompt}")
         print(f"BPM: {self.current_bpm}")
         print("---------------------------------")
         print("Commands:")
-        print("  add <text> [weight]  : Add layer (e.g. 'add drums')")
+        print("  add <text> [weight]  : Add layer")
         print("  bpm <number>         : Change tempo")
         print("  list                 : Show prompts")
         print("  clear                : Clear prompts")
@@ -90,7 +90,9 @@ class LiveDJ:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            print(f"Session Error: {e}")
+            # Only print if not cancelled
+            if self.is_running:
+                print(f"Session Error: {e}")
         finally:
             stream.stop()
             stream.close()
@@ -118,9 +120,8 @@ class LiveDJ:
 
         except asyncio.CancelledError:
             pass
-        except Exception as e:
-            if self.is_running:
-                print(f"API Error: {e}")
+        except Exception:
+            pass
 
     def _audio_consumer(self):
         """Reads from queue and writes to sounddevice (Blocking)."""
@@ -142,8 +143,7 @@ class LiveDJ:
                     self.audio_queue.task_done()
                 except queue.Empty:
                     continue
-                except Exception as e:
-                    print(f"Playback Error: {e}")
+                except Exception:
                     break
 
     async def _input_loop(self, session):
