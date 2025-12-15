@@ -17,6 +17,9 @@ dependencies = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "ruff>=0.1.0",
+    "sounddevice>=0.5.3",
+    "numpy>=2.0.2",
+    "aioconsole>=0.8.2",
 ]
 
 [project.scripts]

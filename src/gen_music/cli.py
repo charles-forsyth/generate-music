@@ -156,6 +156,9 @@ def main():
         action="store_true",
         help="Generate a temporary file, play it, and delete it.",
     )
+    parser.add_argument(
+        "--live", action="store_true", help="Start an interactive live DJ session."
+    )
 
     args = parser.parse_args()
 
@@ -182,6 +185,28 @@ def main():
             start_new_session=True
         )
         return
+
+    # Initialize Generator
+    try:
+        generator = MusicGenerator()
+    except Exception as e:
+        console.print(f"[red]Initialization Error:[/red] {e}")
+        if "credentials" in str(e).lower():
+             console.print("[yellow]Tip: Run 'gen-music --init'[/yellow]")
+        sys.exit(1)
+
+    # Live Mode
+    if args.live:
+        try:
+            from .live import LiveDJ
+            prompt = args.prompt or "ambient electronic"
+            dj = LiveDJ(generator)
+            asyncio.run(dj.start_session(initial_prompt=prompt))
+            return
+        except ImportError as e:
+            console.print("[red]Live mode requires extra dependencies.[/red]")
+            console.print(f"Error: {e}")
+            return
 
     # Handle Input (Arg vs Pipe)
     prompt = args.prompt
@@ -213,15 +238,6 @@ def main():
         else:
             console.print("[red]Error: No prompt provided via argument or pipe.[/red]")
             sys.exit(1)
-
-    # Initialize Generator
-    try:
-        generator = MusicGenerator()
-    except Exception as e:
-        console.print(f"[red]Initialization Error:[/red] {e}")
-        if "credentials" in str(e).lower():
-             console.print("[yellow]Tip: Run 'gen-music --init'[/yellow]")
-        sys.exit(1)
 
     # Smart Prompt Optimization
     final_prompt = prompt
