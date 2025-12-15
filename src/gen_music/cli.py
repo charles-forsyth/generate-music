@@ -1,8 +1,11 @@
 import argparse
 import asyncio
+import atexit
 import os
+import signal
 import subprocess
 import sys
+import tempfile
 import warnings
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +22,38 @@ from .utils import add_to_history, convert_audio, load_history, play_audio
 
 # Create console for stderr (logs/status)
 console = Console(stderr=True)
+
+# Global state for cleanup
+CURRENT_OUTPUT_FILE = None
+IS_TEMP_MODE = False
+GENERATION_COMPLETE = False
+
+
+def cleanup_handler():
+    """Handles file cleanup on exit."""
+    global CURRENT_OUTPUT_FILE, IS_TEMP_MODE, GENERATION_COMPLETE
+    
+    if not CURRENT_OUTPUT_FILE or not os.path.exists(CURRENT_OUTPUT_FILE):
+        return
+
+    # Delete if it's a temp run OR if generation was interrupted (partial file)
+    if IS_TEMP_MODE or not GENERATION_COMPLETE:
+        try:
+            os.remove(CURRENT_OUTPUT_FILE)
+        except OSError:
+            pass
+
+
+def signal_handler(sig, frame):
+    """Handles Ctrl+C gracefully."""
+    console.print("\n[yellow]Stopped by user.[/yellow]")
+    cleanup_handler()
+    sys.exit(0)
+
+
+# Register handlers
+atexit.register(cleanup_handler)
+signal.signal(signal.SIGINT, signal_handler)
 
 
 def show_history():
@@ -75,8 +110,9 @@ def init_config():
         console.print(f"[red]Failed to create configuration: {e}[/red]")
         sys.exit(1)
 
-
 def main():
+    global CURRENT_OUTPUT_FILE, IS_TEMP_MODE, GENERATION_COMPLETE
+
     parser = argparse.ArgumentParser(
         description="Generate music using Google's Vertex AI Lyria model."
     )
@@ -115,6 +151,11 @@ def main():
     parser.add_argument(
         "--optimize", action="store_true", help="Use Gemini to optimize the prompt."
     )
+    parser.add_argument(
+        "--temp",
+        action="store_true",
+        help="Generate a temporary file, play it, and delete it.",
+    )
 
     args = parser.parse_args()
 
@@ -145,10 +186,8 @@ def main():
     # Handle Input (Arg vs Pipe)
     prompt = args.prompt
     
-    # Check for piped input if no prompt argument
     if not prompt and not sys.stdin.isatty():
         try:
-            # Read from stdin
             prompt = sys.stdin.read().strip()
         except Exception:
             pass
@@ -195,20 +234,32 @@ def main():
             console.print(f"[red]Optimization failed, using original:[/red] {e}")
 
     # Determine Output Filename
-    output_file = args.output
-    if not output_file:
-        output_dir = os.path.join(os.path.expanduser("~"), "Music")
-        os.makedirs(output_dir, exist_ok=True)
+    # Temp Mode Logic
+    if args.temp:
+        IS_TEMP_MODE = True
+        args.play = True # Force play
         
-        # Smart Filename Generation (Always On)
-        try:
-            slug = asyncio.run(generator.smart.generate_filename_slug(final_prompt))
-        except Exception:
-            slug = "generated_music"
+        # Create a temp file path (we close the handle so other libs can use it)
+        tf = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        tf.close()
+        output_file = tf.name
+    else:
+        # Normal Mode Logic
+        output_file = args.output
+        if not output_file:
+            output_dir = os.path.join(os.path.expanduser("~"), "Music")
+            os.makedirs(output_dir, exist_ok=True)
             
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Always generate initially as wav, convert later
-        output_file = os.path.join(output_dir, f"{slug}_{timestamp}.wav")
+            try:
+                slug = asyncio.run(generator.smart.generate_filename_slug(final_prompt))
+            except Exception:
+                slug = "generated_music"
+                
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_file = os.path.join(output_dir, f"{slug}_{timestamp}.wav")
+
+    # Set Global state for cleanup
+    CURRENT_OUTPUT_FILE = output_file
 
     console.print("[green]Generating music...[/green]")
     
@@ -222,6 +273,7 @@ def main():
                 bpm=args.bpm,
             )
         )
+        GENERATION_COMPLETE = True
     except Exception as e:
         console.print(f"[red]Error during generation:[/red] {e}")
         sys.exit(1)
@@ -230,20 +282,27 @@ def main():
     final_output = output_file
     if args.format == "mp3":
         final_output = convert_audio(output_file, "mp3")
+        # Update cleanup target to new file
+        if IS_TEMP_MODE or not GENERATION_COMPLETE:
+             if output_file != final_output and os.path.exists(output_file):
+                 os.remove(output_file)
+                 
+        CURRENT_OUTPUT_FILE = final_output
 
-    # Save History
-    add_to_history(
-        {
-            "prompt": prompt,
-            "optimized_prompt": final_prompt if args.optimize else None,
-            "output_file": final_output,
-            "duration": args.duration,
-            "bpm": args.bpm,
-            "timestamp": datetime.now().isoformat(),
-        }
-    )
+    # Save History (Skip for temp?)
+    if not args.temp:
+        add_to_history(
+            {
+                "prompt": prompt,
+                "optimized_prompt": final_prompt if args.optimize else None,
+                "output_file": final_output,
+                "duration": args.duration,
+                "bpm": args.bpm,
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
 
-    # Output ONLY the filename to stdout (for piping to other tools)
+    # Output filename
     print(os.path.basename(final_output))
 
     # Play
