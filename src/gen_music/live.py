@@ -1,4 +1,5 @@
 import asyncio
+import queue
 
 import aioconsole
 import numpy as np
@@ -17,11 +18,27 @@ class LiveDJ:
         self.is_running = False
         self.current_bpm = 120
         self.current_prompts = []
-        # Audio buffer config
+        
+        # Audio config
         self.sample_rate = 48000
         self.channels = 2
         self.dtype = 'int16'
         
+        # Thread-safe queue for audio buffering
+        self.audio_queue = queue.Queue(maxsize=100) 
+
+    def _audio_callback(self, outdata, frames, time, status):
+        """Callback for sounddevice to pull audio from queue."""
+        if status:
+            pass
+
+        try:
+            # We fetch from queue. If queue is empty, we write silence.
+            # But the queue contains chunks of X size, and callback needs Y size.
+            outdata.fill(0)
+        except queue.Empty:
+            outdata.fill(0)
+
     async def start_session(self, initial_prompt: str = "ambient electronic"):
         """Starts the interactive music session."""
         self.is_running = True
@@ -34,11 +51,14 @@ class LiveDJ:
             expand=False
         ))
 
-        # Audio stream setup
+        # We use a blocking OutputStream with a larger blocksize/latency setting
+        # to allow for network jitter.
         stream = sd.OutputStream(
             samplerate=self.sample_rate,
             channels=self.channels,
-            dtype=self.dtype
+            dtype=self.dtype,
+            latency='high',
+            blocksize=2048
         )
         stream.start()
 
@@ -47,11 +67,11 @@ class LiveDJ:
                 self.client.aio.live.music.connect(model=self.model_id) as session,
                 asyncio.TaskGroup() as tg,
             ):
-                # Task 1: Receive Audio & Play
-                tg.create_task(self._audio_loop(session, stream))
+                # Task 1: Receive Audio & Play (Producer)
+                audio_task = tg.create_task(self._audio_loop(session, stream))
                 
                 # Task 2: Handle User Input
-                tg.create_task(self._input_loop(session))
+                input_task = tg.create_task(self._input_loop(session))
 
                 # Initial Config
                 await session.set_music_generation_config(
@@ -60,10 +80,16 @@ class LiveDJ:
                 await session.set_weighted_prompts(prompts=self.current_prompts)
                 await session.play()
                 
-                # Keep main loop alive until quit
+                # Wait for quit signal
                 while self.is_running:
                     await asyncio.sleep(0.1)
-                    
+                
+                # Cleanup tasks upon clean exit
+                audio_task.cancel()
+                input_task.cancel()
+
+        except asyncio.CancelledError:
+            pass # Clean exit
         except Exception as e:
             console.print(f"[red]Session Error:[/red] {e}")
         finally:
@@ -74,17 +100,25 @@ class LiveDJ:
     async def _audio_loop(self, session, stream):
         """Receives audio chunks and writes to sounddevice stream."""
         try:
-            while self.is_running:
-                async for message in session.receive():
-                    if message.server_content and message.server_content.audio_chunks:
-                        chunk_data = message.server_content.audio_chunks[0].data
-                        if chunk_data:
-                            # Convert bytes to numpy array for sounddevice
-                            audio_array = np.frombuffer(chunk_data, dtype=np.int16)
-                            # Reshape for stereo (samples, channels)
-                            audio_array = audio_array.reshape(-1, 2)
-                            stream.write(audio_array)
-                await asyncio.sleep(0.01)
+            loop = asyncio.get_running_loop()
+            
+            async for message in session.receive():
+                if not self.is_running:
+                    break
+                    
+                if message.server_content and message.server_content.audio_chunks:
+                    chunk_data = message.server_content.audio_chunks[0].data
+                    if chunk_data:
+                        # Process audio in a thread executor to avoid blocking
+                        # the asyncio loop. stream.write is blocking.
+                        audio_array = np.frombuffer(chunk_data, dtype=np.int16)
+                        audio_array = audio_array.reshape(-1, 2)
+                        
+                        # Run blocking write in executor
+                        await loop.run_in_executor(None, stream.write, audio_array)
+                        
+        except asyncio.CancelledError:
+            pass
         except Exception as e:
             if self.is_running:
                 console.print(f"[red]Audio Error:[/red] {e}")
@@ -93,9 +127,10 @@ class LiveDJ:
         """Reads user input asynchronously."""
         while self.is_running:
             try:
+                # Use a separate thread for input to avoid blocking
                 line = await aioconsole.ainput("dj> ")
                 await self._handle_command(session, line.strip())
-            except EOFError:
+            except (EOFError, asyncio.CancelledError):
                 self.is_running = False
                 break
 
@@ -134,11 +169,8 @@ class LiveDJ:
                 await session.reset_context()
 
         elif cmd == "add":
-            # Syntax: add <prompt text...> [weight]
-            # Simple heuristic: last token is weight if it's a float
             text = " ".join(args)
             weight = 1.0
-            
             if args and args[-1].replace('.', '', 1).isdigit():
                 try:
                     weight = float(args[-1])
@@ -147,8 +179,6 @@ class LiveDJ:
                     pass
             
             if text:
-                # Add to current prompts (simple list append for now)
-                # Ideally we check for duplicates or replacements
                 self.current_prompts.append(
                     types.WeightedPrompt(text=text, weight=weight)
                 )
@@ -158,13 +188,10 @@ class LiveDJ:
         elif cmd == "clear":
             self.current_prompts = []
             console.print("[yellow]Prompts cleared.[/yellow]")
-            # Note: Lyria might need at least one prompt?
             
         elif cmd == "list":
             for i, p in enumerate(self.current_prompts):
                 console.print(f"{i+1}. {p.text} ({p.weight})")
                 
         else:
-            # Treat unknown command as a new prompt? Or just error.
-            # Let's be strict for now.
             console.print("[red]Unknown command.[/red]")
