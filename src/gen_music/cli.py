@@ -1,3 +1,8 @@
+import warnings
+
+# Aggressively silence all warnings
+warnings.simplefilter("ignore")
+
 import argparse
 import asyncio
 import atexit
