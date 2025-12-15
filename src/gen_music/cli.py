@@ -1,106 +1,22 @@
+import argparse
 import asyncio
 import os
 import re
+import sys
 from datetime import datetime
-from typing import Annotated, Optional
+from pathlib import Path
 
-import typer
 from rich.console import Console
 from rich.table import Table
 
 from .core import MusicGenerator
 from .utils import add_to_history, load_history, play_audio
 
-app = typer.Typer(help="Generate music using Google's Vertex AI Lyria model.")
 console = Console()
 
 
-@app.command()
-def generate(
-    prompt: Annotated[
-        str, typer.Argument(help="The text prompt for the music.")
-    ],
-    output_file: Annotated[
-        Optional[str],
-        typer.Option("--output", "-o", help="Output filename."),
-    ] = None,
-    duration: Annotated[
-        int, typer.Option("--duration", "-d", help="Duration in seconds.")
-    ] = 10,
-    bpm: Annotated[
-        int, typer.Option(help="Beats per minute.")
-    ] = 120,
-    play: Annotated[
-        bool,
-        typer.Option("--play", "-p", help="Play immediately after generation."),
-    ] = False,
-    rerun: Annotated[
-        Optional[int], typer.Option(help="Rerun a history item by ID.")
-    ] = None,
-):
-    """
-    Generate music from a text prompt.
-    """
-
-    # Handle Rerun Logic
-    if rerun is not None:
-        history = load_history()
-        if not history or not (1 <= rerun <= len(history)):
-            console.print(
-                f"[red]Invalid history ID. Choose between 1 and {len(history)}.[/red]"
-            )
-            raise typer.Exit(code=1)
-        entry = history[rerun - 1]
-        prompt = entry.get("prompt", prompt)
-        # We can override other params if passed, or use history defaults.
-        # For simplicity, we stick to the prompt from history, but current CLI args.
-        console.print(f"[yellow]Rerunning history item {rerun}: '{prompt}'[/yellow]")
-
-    # Default Output Filename
-    if not output_file:
-        output_dir = os.path.join(os.path.expanduser("~"), "Music")
-        os.makedirs(output_dir, exist_ok=True)
-
-        sane_prompt = re.sub(r"[^a-zA-Z0-9_]+", "_", prompt)
-        prompt_part = (
-            "_".join(sane_prompt.split("_")[:5]).strip("_") or "generated_music"
-        )
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = os.path.join(output_dir, f"{prompt_part}_{timestamp}.wav")
-
-    # Generate
-    generator = MusicGenerator()
-    try:
-        asyncio.run(
-            generator.generate(
-                prompt=prompt, output_file=output_file, duration=duration, bpm=bpm
-            )
-        )
-    except Exception as e:
-        console.print(f"[red]Error during generation:[/red] {e}")
-        raise typer.Exit(code=1) from e
-
-    # Save History
-    add_to_history(
-        {
-            "prompt": prompt,
-            "output_file": output_file,
-            "duration": duration,
-            "bpm": bpm,
-            "timestamp": datetime.now().isoformat(),
-        }
-    )
-
-    # Play
-    if play:
-        play_audio(output_file)
-
-
-@app.command()
-def history():
-    """
-    Show command history.
-    """
+def show_history():
+    """Show command history."""
     history_data = load_history()
     if not history_data:
         console.print("No history found.")
@@ -123,5 +39,148 @@ def history():
     console.print(table)
 
 
+def init_config():
+    """Initialize configuration directory and .env file."""
+    config_dir = Path.home() / ".config" / "gen-music"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    env_file = config_dir / ".env"
+
+    if env_file.exists():
+        console.print(f"[yellow]Configuration already exists at {env_file}[/yellow]")
+        return
+
+    content = (
+        "# Gen-Music Configuration\n"
+        "PROJECT_ID=your-google-cloud-project-id\n"
+        "LOCATION=us-central1\n"
+        "MODEL_ID=models/lyria-realtime-exp\n"
+        "# Optional: Only required if not using 'gcloud auth application-default'\n"
+        "# GOOGLE_API_KEY=your-api-key\n"
+    )
+
+    try:
+        env_file.write_text(content)
+        # Set permissions to read/write only for the user (600)
+        env_file.chmod(0o600)
+        console.print(f"[green]Created configuration at {env_file}[/green]")
+        console.print(
+            f"Please edit [bold]{env_file}[/bold] with your Google Cloud details."
+        )
+    except Exception as e:
+        console.print(f"[red]Failed to create configuration: {e}[/red]")
+        sys.exit(1)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Generate music using Google's Vertex AI Lyria model."
+    )
+    parser.add_argument(
+        "prompt", nargs="?", help="The text prompt for the music."
+    )
+    parser.add_argument(
+        "-o", "--output", help="Output filename."
+    )
+    parser.add_argument(
+        "-d", "--duration", type=int, default=10, help="Duration in seconds."
+    )
+    parser.add_argument(
+        "--bpm", type=int, default=120, help="Beats per minute."
+    )
+    parser.add_argument(
+        "-p", "--play", action="store_true", help="Play immediately after generation."
+    )
+    parser.add_argument(
+        "--history", action="store_true", help="Show command history."
+    )
+    parser.add_argument(
+        "--rerun", type=int, help="Rerun a history item by ID."
+    )
+    parser.add_argument(
+        "--init",
+        action="store_true",
+        help="Initialize configuration in ~/.config/gen-music/",
+    )
+
+    args = parser.parse_args()
+
+    # Init Command
+    if args.init:
+        init_config()
+        return
+
+    # History Command
+    if args.history:
+        show_history()
+        return
+
+    # Handle Rerun Logic or New Prompt
+    prompt = args.prompt
+
+    if args.rerun is not None:
+        history = load_history()
+        if not history or not (1 <= args.rerun <= len(history)):
+            console.print(
+                f"[red]Invalid history ID. Choose between 1 and {len(history)}.[/red]"
+            )
+            sys.exit(1)
+        entry = history[args.rerun - 1]
+        prompt = entry.get("prompt")
+        console.print(
+            f"[yellow]Rerunning history item {args.rerun}: '{prompt}'[/yellow]"
+        )
+
+    if not prompt:
+        parser.error("the following arguments are required: prompt")
+
+    # Default Output Filename
+    output_file = args.output
+    if not output_file:
+        output_dir = os.path.join(os.path.expanduser("~"), "Music")
+        os.makedirs(output_dir, exist_ok=True)
+
+        sane_prompt = re.sub(r"[^a-zA-Z0-9_]+", "_", prompt)
+        prompt_part = (
+            "_".join(sane_prompt.split("_")[:5]).strip("_") or "generated_music"
+        )
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = os.path.join(output_dir, f"{prompt_part}_{timestamp}.wav")
+
+    # Generate
+    generator = MusicGenerator()
+    try:
+        asyncio.run(
+            generator.generate(
+                prompt=prompt,
+                output_file=output_file,
+                duration=args.duration,
+                bpm=args.bpm,
+            )
+        )
+    except Exception as e:
+        console.print(f"[red]Error during generation:[/red] {e}")
+        # Hint at configuration if authentication fails
+        if "401" in str(e) or "credentials" in str(e).lower():
+            console.print(
+                "\n[yellow]Tip: Run 'gen-music --init' to set up credentials.[/yellow]"
+            )
+        sys.exit(1)
+
+    # Save History
+    add_to_history(
+        {
+            "prompt": prompt,
+            "output_file": output_file,
+            "duration": args.duration,
+            "bpm": args.bpm,
+            "timestamp": datetime.now().isoformat(),
+        }
+    )
+
+    # Play
+    if args.play:
+        play_audio(output_file)
+
+
 if __name__ == "__main__":
-    app()
+    main()
