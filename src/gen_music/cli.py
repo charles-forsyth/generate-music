@@ -112,10 +112,11 @@ async def async_main(args):
             prompt = args.prompt or "ambient electronic"
             
             if args.optimize:
+                # Silent optimization
                 try:
                     prompt = await generator.smart.optimize_prompt(prompt)
                 except Exception:
-                    pass
+                    pass # Ignore failure, use original prompt
 
             dj = LiveDJ(generator)
             await dj.start_session(initial_prompt=prompt)

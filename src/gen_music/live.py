@@ -1,12 +1,15 @@
 import asyncio
 import queue
 import threading
+import warnings
 
 import aioconsole
 import numpy as np
 import sounddevice as sd
 from google.genai import types
 
+# Filter warnings here too to ensure Live Mode is clean
+warnings.filterwarnings("ignore", module="google.genai")
 
 class LiveDJ:
     def __init__(self, generator):
@@ -66,7 +69,9 @@ class LiveDJ:
                 producer_task = tg.create_task(self._api_producer(session))
                 
                 # Task 2: Play Audio (Consumer - Threaded)
-                asyncio.to_thread(self._audio_consumer)
+                # Correctly schedule the threaded consumer
+                # We assign to a var to prevent GC but we don't access it
+                tg.create_task(asyncio.to_thread(self._audio_consumer))
                 
                 # Task 3: Handle Input
                 input_task = tg.create_task(self._input_loop(session))
@@ -85,12 +90,12 @@ class LiveDJ:
                 # Cleanup
                 producer_task.cancel()
                 input_task.cancel()
+                # Stop consumer loop by sending sentinel
                 self.audio_queue.put(None) 
 
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            # Only print if not cancelled
             if self.is_running:
                 print(f"Session Error: {e}")
         finally:
