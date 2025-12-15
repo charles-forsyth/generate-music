@@ -96,7 +96,7 @@ class MusicGenerator:
                 )
 
                 # Send prompt
-                # If we had multiple, we could list them. Here we just take the main one.
+                # If we had multiple, we could list them. Using single prompt for now.
                 await session.set_weighted_prompts(
                     prompts=[
                         types.WeightedPrompt(text=prompt, weight=1.0),

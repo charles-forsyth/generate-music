@@ -38,7 +38,9 @@ def test_generate_command(mock_generator, clean_history):
         assert data[0]["prompt"] == "test prompt"
 
 def test_history_command(clean_history):
-    save_history([{"prompt": "old prompt", "output_file": "file.wav", "timestamp": "2023-01-01"}])
+    save_history([
+        {"prompt": "old prompt", "output_file": "file.wav", "timestamp": "2023-01-01"}
+    ])
     result = runner.invoke(app, ["history"])
     assert result.exit_code == 0
     assert "old prompt" in result.stdout

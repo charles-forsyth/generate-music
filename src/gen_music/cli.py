@@ -1,14 +1,12 @@
 import asyncio
-import json
 import os
 import re
 from datetime import datetime
-from typing import Optional
+from typing import Annotated, Optional
 
 import typer
 from rich.console import Console
 from rich.table import Table
-from typing_extensions import Annotated
 
 from .core import MusicGenerator
 from .utils import add_to_history, load_history, play_audio
@@ -55,7 +53,7 @@ def generate(
         entry = history[rerun - 1]
         prompt = entry.get("prompt", prompt)
         # We can override other params if passed, or use history defaults.
-        # For simplicity, we stick to the prompt from history, but current CLI args for others.
+        # For simplicity, we stick to the prompt from history, but current CLI args.
         console.print(f"[yellow]Rerunning history item {rerun}: '{prompt}'[/yellow]")
 
     # Default Output Filename

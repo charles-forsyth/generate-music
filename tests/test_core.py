@@ -10,7 +10,11 @@ from gen_music.core import MusicGenerator
 def mock_genai_client():
     with patch("gen_music.core.genai.Client") as MockClient:
         client_instance = MockClient.return_value
-        session_mock = AsyncMock()
+        # session is MagicMock as receive() is not awaited (returns async iterator)
+        session_mock = MagicMock()
+        session_mock.set_music_generation_config = AsyncMock()
+        session_mock.set_weighted_prompts = AsyncMock()
+        session_mock.play = AsyncMock()
         
         # Setup the context manager for connect
         connect_ctx = AsyncMock()
@@ -20,8 +24,17 @@ def mock_genai_client():
         
         yield client_instance, session_mock
 
+@pytest.fixture
+def mock_settings():
+    with patch("gen_music.core.get_settings") as MockSettings:
+        settings_instance = MockSettings.return_value
+        settings_instance.project_id = "test-project"
+        settings_instance.location = "us-central1"
+        settings_instance.model_id = "models/test-model"
+        yield settings_instance
+
 @pytest.mark.asyncio
-async def test_generate_music(mock_genai_client, tmp_path):
+async def test_generate_music(mock_genai_client, mock_settings, tmp_path):
     client_mock, session_mock = mock_genai_client
     
     # Mock receive to yield one chunk of audio
@@ -34,9 +47,10 @@ async def test_generate_music(mock_genai_client, tmp_path):
     async def fake_receive():
         yield mock_message
         # Sleep briefly to allow the loop to be cancelled or exit
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.001)
         
-    session_mock.receive.return_value = fake_receive()
+    # Use side_effect to return a new generator each time receive() is called
+    session_mock.receive.side_effect = fake_receive
 
     output_file = tmp_path / "test_output.wav"
     
@@ -44,7 +58,7 @@ async def test_generate_music(mock_genai_client, tmp_path):
     # We use a very short duration so the loop condition (bytes target) is met quickly
     # 100 frames at 48k is tiny duration.
     # The code calculates target_bytes = duration * FRAME_RATE * ...
-    # Let's override the duration to be very small or rely on the loop reading the chunk.
+    # Override duration to be small.
     
     # Actually, the loop continues until total_bytes >= target_bytes.
     # If duration=1 (default arg in test), target is huge.
