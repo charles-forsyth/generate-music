@@ -255,7 +255,6 @@ def main():
         console.print("[cyan]✨ Optimizing prompt with Gemini...[/cyan]")
         try:
             final_prompt = asyncio.run(generator.smart.optimize_prompt(prompt))
-            console.print(f"[dim]Optimized: {final_prompt}[/dim]")
         except Exception as e:
             console.print(f"[red]Optimization failed, using original:[/red] {e}")
 
