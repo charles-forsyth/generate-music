@@ -7,13 +7,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    project_id: str = Field(..., description="Google Cloud Project ID")
+    # Optional if using API Key
+    project_id: Optional[str] = Field(None, description="Google Cloud Project ID")
     location: str = Field("us-central1", description="Google Cloud Location")
     model_id: str = Field(
         "models/lyria-realtime-exp", description="Vertex AI Model ID"
     )
 
-    # Optional: explicitly configured API key if not using ADC
+    # Preferred: API Key
     google_api_key: Optional[str] = Field(None, alias="GOOGLE_API_KEY")
 
     model_config = SettingsConfigDict(

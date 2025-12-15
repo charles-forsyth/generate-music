@@ -2,15 +2,21 @@ import argparse
 import asyncio
 import os
 import re
+import subprocess
 import sys
+import warnings
 from datetime import datetime
 from pathlib import Path
 
+# Suppress pydub SyntaxWarnings in Python 3.12+
+warnings.filterwarnings("ignore", category=SyntaxWarning, module="pydub")
+
+# ruff: noqa: E402
 from rich.console import Console
 from rich.table import Table
 
 from .core import MusicGenerator
-from .utils import add_to_history, load_history, play_audio
+from .utils import add_to_history, convert_audio, load_history, play_audio
 
 console = Console()
 
@@ -101,6 +107,12 @@ def main():
         action="store_true",
         help="Initialize configuration in ~/.config/gen-music/",
     )
+    parser.add_argument(
+        "-f", "--format", choices=["wav", "mp3"], default="wav", help="Output format."
+    )
+    parser.add_argument(
+        "-b", "--background", action="store_true", help="Run in background."
+    )
 
     args = parser.parse_args()
 
@@ -112,6 +124,22 @@ def main():
     # History Command
     if args.history:
         show_history()
+        return
+
+    # Background Execution Logic
+    if args.background:
+        # Reconstruct the command without the --background flag
+        cmd = [sys.executable, "-m", "gen_music.cli"] + [
+            arg for arg in sys.argv[1:] if arg not in ("-b", "--background")
+        ]
+        
+        console.print("[green]Launching generation in background...[/green]")
+        subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True
+        )
         return
 
     # Handle Rerun Logic or New Prompt
@@ -144,6 +172,7 @@ def main():
             "_".join(sane_prompt.split("_")[:5]).strip("_") or "generated_music"
         )
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Always generate initially as wav, convert later if needed
         output_file = os.path.join(output_dir, f"{prompt_part}_{timestamp}.wav")
 
     # Generate
@@ -166,11 +195,16 @@ def main():
             )
         sys.exit(1)
 
+    # Convert if requested
+    final_output = output_file
+    if args.format == "mp3":
+        final_output = convert_audio(output_file, "mp3")
+
     # Save History
     add_to_history(
         {
             "prompt": prompt,
-            "output_file": output_file,
+            "output_file": final_output,
             "duration": args.duration,
             "bpm": args.bpm,
             "timestamp": datetime.now().isoformat(),
@@ -179,7 +213,7 @@ def main():
 
     # Play
     if args.play:
-        play_audio(output_file)
+        play_audio(final_output)
 
 
 if __name__ == "__main__":

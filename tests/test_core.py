@@ -28,7 +28,9 @@ def mock_genai_client():
 def mock_settings():
     with patch("gen_music.core.get_settings") as MockSettings:
         settings_instance = MockSettings.return_value
-        settings_instance.project_id = "test-project"
+        # Test with API Key path
+        settings_instance.google_api_key = "test-key"
+        settings_instance.project_id = None
         settings_instance.location = "us-central1"
         settings_instance.model_id = "models/test-model"
         yield settings_instance
@@ -49,7 +51,6 @@ async def test_generate_music(mock_genai_client, mock_settings, tmp_path):
         # Sleep briefly to allow the loop to be cancelled or exit
         await asyncio.sleep(0.001)
         
-    # Use side_effect to return a new generator each time receive() is called
     session_mock.receive.side_effect = fake_receive
 
     output_file = tmp_path / "test_output.wav"

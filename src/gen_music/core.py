@@ -11,13 +11,27 @@ from .config import get_settings
 class MusicGenerator:
     def __init__(self):
         self.settings = get_settings()
-        # Initialize client with the appropriate options
-        # Note: Authentication is handled by google-genai via ADC or API Key env var
-        self.client = genai.Client(
-            http_options={"api_version": "v1alpha"},
-            project=self.settings.project_id,
-            location=self.settings.location,
-        )
+
+        # Logic to choose between API Key (Google AI) and ADC (Google Cloud Vertex AI)
+        if self.settings.google_api_key:
+            # Use Google AI API (AI Studio)
+            self.client = genai.Client(
+                api_key=self.settings.google_api_key,
+                http_options={"api_version": "v1alpha"},
+            )
+        elif self.settings.project_id:
+            # Use Google Cloud Vertex AI
+            self.client = genai.Client(
+                vertexai=True,
+                project=self.settings.project_id,
+                location=self.settings.location,
+                http_options={"api_version": "v1alpha"},
+            )
+        else:
+            raise ValueError(
+                "Invalid Configuration: You must provide either a GOOGLE_API_KEY "
+                "or a PROJECT_ID in your .env configuration."
+            )
 
     async def generate(
         self,

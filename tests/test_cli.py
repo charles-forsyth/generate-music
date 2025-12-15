@@ -16,6 +16,12 @@ def mock_generator():
         yield instance
 
 @pytest.fixture
+def mock_convert():
+    with patch("gen_music.cli.convert_audio") as MockConv:
+        MockConv.return_value = "converted.mp3"
+        yield MockConv
+
+@pytest.fixture
 def clean_history():
     if os.path.exists(HISTORY_FILE):
         os.remove(HISTORY_FILE)
@@ -60,7 +66,6 @@ def test_missing_prompt(clean_history):
     assert exit_code != 0
 
 def test_init_config(tmp_path):
-    # Mock Path.home() to return tmp_path so we don't mess with real user config
     with patch("gen_music.cli.Path.home", return_value=tmp_path):
         exit_code = run_cli(["--init"])
         assert exit_code == 0
@@ -71,3 +76,16 @@ def test_init_config(tmp_path):
         assert config_dir.exists()
         assert env_file.exists()
         assert "PROJECT_ID" in env_file.read_text()
+
+def test_mp3_conversion(mock_generator, mock_convert, clean_history):
+    exit_code = run_cli(["test prompt", "--format", "mp3"])
+    assert exit_code == 0
+    mock_convert.assert_called_once()
+
+def test_background_mode(mock_generator):
+    with patch("subprocess.Popen") as mock_popen:
+        exit_code = run_cli(["test prompt", "--background"])
+        assert exit_code == 0
+        mock_popen.assert_called_once()
+        # Generator should NOT be called in the parent process
+        mock_generator.generate.assert_not_called()

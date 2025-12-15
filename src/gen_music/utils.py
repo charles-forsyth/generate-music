@@ -1,9 +1,13 @@
-import contextlib
 import json
 import os
+from contextlib import redirect_stdout
+from pathlib import Path
 from typing import Any
 
+from pydub import AudioSegment
+
 HISTORY_FILE = ".music_history.json"
+
 
 def play_audio(file_path: str):
     """Plays an audio file using pygame."""
@@ -15,7 +19,7 @@ def play_audio(file_path: str):
         return
 
     # Suppress pygame welcome message
-    with contextlib.redirect_stdout(None):
+    with redirect_stdout(None):
         pygame.init()
         pygame.mixer.init()
 
@@ -31,6 +35,7 @@ def play_audio(file_path: str):
         pygame.mixer.quit()
         pygame.quit()
 
+
 def load_history() -> list[dict[str, Any]]:
     """Loads the prompt history from the history file."""
     if not os.path.exists(HISTORY_FILE):
@@ -41,10 +46,12 @@ def load_history() -> list[dict[str, Any]]:
     except json.JSONDecodeError:
         return []
 
+
 def save_history(history: list[dict[str, Any]]):
     """Saves the prompt history to the history file."""
     with open(HISTORY_FILE, "w") as f:
         json.dump(history, f, indent=4)
+
 
 def add_to_history(entry: dict[str, Any]):
     """Adds a new entry to history."""
@@ -53,3 +60,23 @@ def add_to_history(entry: dict[str, Any]):
     if entry not in history:
         history.append(entry)
         save_history(history)
+
+def convert_audio(input_path: str, output_format: str = "mp3") -> str:
+    """Converts audio file to the specified format using pydub."""
+    if output_format == "wav":
+        return input_path
+
+    path = Path(input_path)
+    output_path = path.with_suffix(f".{output_format}")
+    
+    print(f"Converting to {output_format}...")
+    try:
+        audio = AudioSegment.from_wav(str(path))
+        audio.export(str(output_path), format=output_format)
+        # Optionally remove the original wav if not requested? 
+        # For safety we keep it or we can delete it. 
+        # Let's keep it simple: Return the new path.
+        return str(output_path)
+    except Exception as e:
+        print(f"Error converting audio: {e}")
+        return input_path
