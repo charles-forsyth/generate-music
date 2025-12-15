@@ -1,4 +1,6 @@
 import asyncio
+import queue
+import threading
 
 import aioconsole
 import numpy as np
@@ -17,41 +19,71 @@ class LiveDJ:
         self.is_running = False
         self.current_bpm = 120
         self.current_prompts = []
-        # Audio buffer config
+        
+        # Audio config
         self.sample_rate = 48000
         self.channels = 2
         self.dtype = 'int16'
         
+        # Jitter Buffer
+        # Thread-safe queue for sounddevice callback (runs in separate C thread)
+        self.audio_queue = queue.Queue(maxsize=500) 
+        # Number of chunks to buffer before starting playback (~1-2s)
+        self.buffer_threshold = 20 
+        self.playback_started = threading.Event()
+
+    def _audio_callback(self, outdata, frames, time, status):
+        """
+        Callback for sounddevice to pull audio from queue.
+        This runs in a separate thread managed by sounddevice/PortAudio.
+        """
+        if status:
+            # We can log status if needed, but keeping it clean for TUI
+            pass
+
+        # If we haven't buffered enough, output silence
+        if not self.playback_started.is_set():
+            outdata.fill(0)
+            return
+
+        try:
+            # We need 'frames' samples.
+            # Our queue has chunks of unknown size. We need to assemble them.
+            # This is complex in a callback.
+            # SIMPLIFIED APPROACH:
+            # We will use a Blocking Stream in a separate thread (Consumer)
+            # instead of a Callback Stream. It handles variable chunk sizes much better.
+            pass
+        except Exception:
+            outdata.fill(0)
+
     async def start_session(self, initial_prompt: str = "ambient electronic"):
         """Starts the interactive music session."""
         self.is_running = True
         self.current_prompts = [types.WeightedPrompt(text=initial_prompt, weight=1.0)]
+        self.playback_started.clear()
         
         console.print(Panel(
             f"[bold green]Starting Live DJ Session[/bold green]\n"
             f"Initial Prompt: {initial_prompt}\n"
-            "Type 'help' for commands, 'quit' to exit.",
+            "Buffering audio...",
             expand=False
         ))
-
-        # Audio stream setup
-        stream = sd.OutputStream(
-            samplerate=self.sample_rate,
-            channels=self.channels,
-            dtype=self.dtype
-        )
-        stream.start()
 
         try:
             async with (
                 self.client.aio.live.music.connect(model=self.model_id) as session,
                 asyncio.TaskGroup() as tg,
             ):
-                # Task 1: Receive Audio & Play
-                tg.create_task(self._audio_loop(session, stream))
+                # Task 1: Receive Audio from API (Producer)
+                producer_task = tg.create_task(self._api_producer(session))
                 
-                # Task 2: Handle User Input
-                tg.create_task(self._input_loop(session))
+                # Task 2: Play Audio to Speakers (Consumer)
+                # Run in thread because sounddevice blocking writes are blocking
+                asyncio.to_thread(self._audio_consumer)
+                
+                # Task 3: Handle User Input
+                input_task = tg.create_task(self._input_loop(session))
 
                 # Initial Config
                 await session.set_music_generation_config(
@@ -60,34 +92,87 @@ class LiveDJ:
                 await session.set_weighted_prompts(prompts=self.current_prompts)
                 await session.play()
                 
-                # Keep main loop alive until quit
+                # Wait for quit
                 while self.is_running:
                     await asyncio.sleep(0.1)
-                    
+                
+                # Cancel tasks
+                producer_task.cancel()
+                input_task.cancel()
+                
+                # Unblock consumer if it's waiting
+                self.audio_queue.put(None) 
+
+        except asyncio.CancelledError:
+            pass
         except Exception as e:
             console.print(f"[red]Session Error:[/red] {e}")
         finally:
-            stream.stop()
-            stream.close()
+            self.is_running = False
+            self.audio_queue.put(None) # Ensure consumer exits
             console.print("[yellow]Session Ended.[/yellow]")
 
-    async def _audio_loop(self, session, stream):
-        """Receives audio chunks and writes to sounddevice stream."""
+    async def _api_producer(self, session):
+        """Receives audio chunks from API and puts them in the queue."""
         try:
-            while self.is_running:
-                async for message in session.receive():
-                    if message.server_content and message.server_content.audio_chunks:
-                        chunk_data = message.server_content.audio_chunks[0].data
-                        if chunk_data:
-                            # Convert bytes to numpy array for sounddevice
-                            audio_array = np.frombuffer(chunk_data, dtype=np.int16)
-                            # Reshape for stereo (samples, channels)
-                            audio_array = audio_array.reshape(-1, 2)
-                            stream.write(audio_array)
-                await asyncio.sleep(0.01)
+            async for message in session.receive():
+                if not self.is_running:
+                    break
+                    
+                if message.server_content and message.server_content.audio_chunks:
+                    chunk_data = message.server_content.audio_chunks[0].data
+                    if chunk_data:
+                        # Convert to numpy and put in queue
+                        audio_array = np.frombuffer(chunk_data, dtype=np.int16)
+                        audio_array = audio_array.reshape(-1, 2)
+                        
+                        # This blocks if queue is full, providing backpressure
+                        await asyncio.to_thread(self.audio_queue.put, audio_array)
+                        
+                        # Check buffer status
+                        if not self.playback_started.is_set():
+                            if self.audio_queue.qsize() >= self.buffer_threshold:
+                                self.playback_started.set()
+                                console.print("[green]Buffer full. Playing...[/green]")
+
+        except asyncio.CancelledError:
+            pass
         except Exception as e:
             if self.is_running:
-                console.print(f"[red]Audio Error:[/red] {e}")
+                console.print(f"[red]API Error:[/red] {e}")
+
+    def _audio_consumer(self):
+        """Reads from queue and writes to sounddevice (Blocking)."""
+        # Wait until buffer is ready
+        self.playback_started.wait()
+        
+        # Start Stream
+        with sd.OutputStream(
+            samplerate=self.sample_rate,
+            channels=self.channels,
+            dtype=self.dtype,
+            latency='high',
+            blocksize=2048 # Tuning for stability
+        ) as stream:
+            while self.is_running:
+                try:
+                    # Get chunk with timeout to check is_running
+                    chunk = self.audio_queue.get(timeout=1.0)
+                    
+                    if chunk is None: # Sentinel
+                        break
+                        
+                    stream.write(chunk)
+                    self.audio_queue.task_done()
+                    
+                except queue.Empty:
+                    # Buffer underrun in queue!
+                    # We can print a warning or just wait.
+                    # console.print("[dim]Buffer underrun...[/dim]", style="red")
+                    continue
+                except Exception as e:
+                    console.print(f"[red]Playback Error:[/red] {e}")
+                    break
 
     async def _input_loop(self, session):
         """Reads user input asynchronously."""
@@ -95,7 +180,7 @@ class LiveDJ:
             try:
                 line = await aioconsole.ainput("dj> ")
                 await self._handle_command(session, line.strip())
-            except EOFError:
+            except (EOFError, asyncio.CancelledError):
                 self.is_running = False
                 break
 
@@ -125,6 +210,9 @@ class LiveDJ:
             if args and args[0].isdigit():
                 new_bpm = int(args[0])
                 self.current_bpm = new_bpm
+                # Clear buffer/flag on reset? 
+                # Yes, resetting context might cause a pause.
+                # Let's keep it simple for now.
                 console.print(
                     f"[yellow]Changing BPM to {new_bpm} (Resets Context)...[/yellow]"
                 )
@@ -134,11 +222,8 @@ class LiveDJ:
                 await session.reset_context()
 
         elif cmd == "add":
-            # Syntax: add <prompt text...> [weight]
-            # Simple heuristic: last token is weight if it's a float
             text = " ".join(args)
             weight = 1.0
-            
             if args and args[-1].replace('.', '', 1).isdigit():
                 try:
                     weight = float(args[-1])
@@ -147,8 +232,6 @@ class LiveDJ:
                     pass
             
             if text:
-                # Add to current prompts (simple list append for now)
-                # Ideally we check for duplicates or replacements
                 self.current_prompts.append(
                     types.WeightedPrompt(text=text, weight=weight)
                 )
@@ -158,13 +241,10 @@ class LiveDJ:
         elif cmd == "clear":
             self.current_prompts = []
             console.print("[yellow]Prompts cleared.[/yellow]")
-            # Note: Lyria might need at least one prompt?
             
         elif cmd == "list":
             for i, p in enumerate(self.current_prompts):
                 console.print(f"{i+1}. {p.text} ({p.weight})")
                 
         else:
-            # Treat unknown command as a new prompt? Or just error.
-            # Let's be strict for now.
             console.print("[red]Unknown command.[/red]")
