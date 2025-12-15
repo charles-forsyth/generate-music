@@ -110,9 +110,145 @@ def init_config():
         console.print(f"[red]Failed to create configuration: {e}[/red]")
         sys.exit(1)
 
-def main():
+
+async def async_main(args):
+    """Async entry point for the CLI logic."""
     global CURRENT_OUTPUT_FILE, IS_TEMP_MODE, GENERATION_COMPLETE
 
+    # Initialize Generator inside the loop
+    try:
+        generator = MusicGenerator()
+    except Exception as e:
+        console.print(f"[red]Initialization Error:[/red] {e}")
+        if "credentials" in str(e).lower():
+             console.print("[yellow]Tip: Run 'gen-music --init'[/yellow]")
+        sys.exit(1)
+
+    # Live Mode
+    if args.live:
+        try:
+            from .live import LiveDJ
+            prompt = args.prompt or "ambient electronic"
+            
+            if args.optimize:
+                console.print("[cyan]✨ Optimizing Live DJ prompt...[/cyan]")
+                try:
+                    prompt = await generator.smart.optimize_prompt(prompt)
+                    # We don't print it anymore to keep clean UI
+                except Exception as e:
+                    console.print(f"[red]Optimization failed: {e}[/red]")
+
+            dj = LiveDJ(generator)
+            await dj.start_session(initial_prompt=prompt)
+            return
+        except ImportError as e:
+            console.print("[red]Live mode requires extra dependencies.[/red]")
+            console.print(f"Error: {e}")
+            return
+
+    # Handle Input (Arg vs Pipe)
+    prompt = args.prompt
+    
+    if not prompt and not sys.stdin.isatty():
+        try:
+            prompt = sys.stdin.read().strip()
+        except Exception:
+            pass
+
+    # Rerun Logic
+    if args.rerun is not None:
+        history = load_history()
+        if not history or not (1 <= args.rerun <= len(history)):
+            console.print(
+                f"[red]Invalid history ID. Choose between 1 and {len(history)}.[/red]"
+            )
+            sys.exit(1)
+        entry = history[args.rerun - 1]
+        prompt = entry.get("prompt")
+        console.print(
+            f"[yellow]Rerunning history item {args.rerun}: '{prompt}'[/yellow]"
+        )
+
+    if not prompt:
+        console.print("[red]Error: No prompt provided via argument or pipe.[/red]")
+        sys.exit(1)
+
+    # Smart Prompt Optimization
+    final_prompt = prompt
+    if args.optimize:
+        console.print("[cyan]✨ Optimizing prompt with Gemini...[/cyan]")
+        try:
+            final_prompt = await generator.smart.optimize_prompt(prompt)
+        except Exception as e:
+            console.print(f"[red]Optimization failed, using original:[/red] {e}")
+
+    # Determine Output Filename
+    if args.temp:
+        IS_TEMP_MODE = True
+        args.play = True
+        tf = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        tf.close()
+        output_file = tf.name
+    else:
+        output_file = args.output
+        if not output_file:
+            output_dir = os.path.join(os.path.expanduser("~"), "Music")
+            os.makedirs(output_dir, exist_ok=True)
+            
+            try:
+                slug = await generator.smart.generate_filename_slug(final_prompt)
+            except Exception:
+                # Debug logging if needed, or just silent fallback
+                slug = "generated_music"
+                
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_file = os.path.join(output_dir, f"{slug}_{timestamp}.wav")
+
+    CURRENT_OUTPUT_FILE = output_file
+    console.print("[green]Generating music...[/green]")
+    
+    # Generate
+    try:
+        await generator.generate(
+            prompt=final_prompt,
+            output_file=output_file,
+            duration=args.duration,
+            bpm=args.bpm,
+        )
+        GENERATION_COMPLETE = True
+    except Exception as e:
+        console.print(f"[red]Error during generation:[/red] {e}")
+        sys.exit(1)
+
+    # Convert
+    final_output = output_file
+    if args.format == "mp3":
+        final_output = convert_audio(output_file, "mp3")
+        if IS_TEMP_MODE or not GENERATION_COMPLETE:
+             if output_file != final_output and os.path.exists(output_file):
+                 os.remove(output_file)
+        CURRENT_OUTPUT_FILE = final_output
+
+    # History
+    if not args.temp:
+        add_to_history(
+            {
+                "prompt": prompt,
+                "optimized_prompt": final_prompt if args.optimize else None,
+                "output_file": final_output,
+                "duration": args.duration,
+                "bpm": args.bpm,
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
+
+    print(os.path.basename(final_output))
+
+    if args.play:
+        play_audio(final_output)
+
+
+def main():
     parser = argparse.ArgumentParser(
         description="Generate music using Google's Vertex AI Lyria model."
     )
@@ -162,17 +298,15 @@ def main():
 
     args = parser.parse_args()
 
-    # Init Command
+    # Sync commands
     if args.init:
         init_config()
         return
 
-    # History Command
     if args.history:
         show_history()
         return
 
-    # Background Execution Logic
     if args.background:
         cmd = [sys.executable, "-m", "gen_music.cli"] + [
             arg for arg in sys.argv[1:] if arg not in ("-b", "--background")
@@ -186,153 +320,15 @@ def main():
         )
         return
 
-    # Initialize Generator
-    try:
-        generator = MusicGenerator()
-    except Exception as e:
-        console.print(f"[red]Initialization Error:[/red] {e}")
-        if "credentials" in str(e).lower():
-             console.print("[yellow]Tip: Run 'gen-music --init'[/yellow]")
-        sys.exit(1)
-
-    # Live Mode
-    if args.live:
-        try:
-            from .live import LiveDJ
-            prompt = args.prompt or "ambient electronic"
-            
-            # Optimize prompt if requested
-            if args.optimize:
-                console.print("[cyan]✨ Optimizing Live DJ prompt...[/cyan]")
-                try:
-                    prompt = asyncio.run(generator.smart.optimize_prompt(prompt))
-                    console.print(f"[dim]Optimized: {prompt}[/dim]")
-                except Exception as e:
-                    console.print(f"[red]Optimization failed: {e}[/red]")
-
-            dj = LiveDJ(generator)
-            asyncio.run(dj.start_session(initial_prompt=prompt))
-            return
-        except ImportError as e:
-            console.print("[red]Live mode requires extra dependencies.[/red]")
-            console.print(f"Error: {e}")
-            return
-
-    # Handle Input (Arg vs Pipe)
-    prompt = args.prompt
+    # Check for empty prompt in TTY mode (moved from inside async_main to fail fast)
+    # Actually, async_main handles pipe detection, so we proceed.
     
-    if not prompt and not sys.stdin.isatty():
-        try:
-            prompt = sys.stdin.read().strip()
-        except Exception:
-            pass
-
-    # Rerun Logic overrides prompt
-    if args.rerun is not None:
-        history = load_history()
-        if not history or not (1 <= args.rerun <= len(history)):
-            console.print(
-                f"[red]Invalid history ID. Choose between 1 and {len(history)}.[/red]"
-            )
-            sys.exit(1)
-        entry = history[args.rerun - 1]
-        prompt = entry.get("prompt")
-        console.print(
-            f"[yellow]Rerunning history item {args.rerun}: '{prompt}'[/yellow]"
-        )
-
-    if not prompt:
-        if sys.stdin.isatty():
-            parser.print_help()
-            sys.exit(1)
-        else:
-            console.print("[red]Error: No prompt provided via argument or pipe.[/red]")
-            sys.exit(1)
-
-    # Smart Prompt Optimization
-    final_prompt = prompt
-    if args.optimize:
-        console.print("[cyan]✨ Optimizing prompt with Gemini...[/cyan]")
-        try:
-            final_prompt = asyncio.run(generator.smart.optimize_prompt(prompt))
-        except Exception as e:
-            console.print(f"[red]Optimization failed, using original:[/red] {e}")
-
-    # Determine Output Filename
-    # Temp Mode Logic
-    if args.temp:
-        IS_TEMP_MODE = True
-        args.play = True # Force play
-        
-        # Create a temp file path (we close the handle so other libs can use it)
-        tf = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        tf.close()
-        output_file = tf.name
-    else:
-        # Normal Mode Logic
-        output_file = args.output
-        if not output_file:
-            output_dir = os.path.join(os.path.expanduser("~"), "Music")
-            os.makedirs(output_dir, exist_ok=True)
-            
-            try:
-                slug = asyncio.run(generator.smart.generate_filename_slug(final_prompt))
-            except Exception:
-                slug = "generated_music"
-                
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_file = os.path.join(output_dir, f"{slug}_{timestamp}.wav")
-
-    # Set Global state for cleanup
-    CURRENT_OUTPUT_FILE = output_file
-
-    console.print("[green]Generating music...[/green]")
-    
-    # Generate
+    # Run Async Main Loop
     try:
-        asyncio.run(
-            generator.generate(
-                prompt=final_prompt,
-                output_file=output_file,
-                duration=args.duration,
-                bpm=args.bpm,
-            )
-        )
-        GENERATION_COMPLETE = True
-    except Exception as e:
-        console.print(f"[red]Error during generation:[/red] {e}")
-        sys.exit(1)
-
-    # Convert if requested (Default MP3)
-    final_output = output_file
-    if args.format == "mp3":
-        final_output = convert_audio(output_file, "mp3")
-        # Update cleanup target to new file
-        if IS_TEMP_MODE or not GENERATION_COMPLETE:
-             if output_file != final_output and os.path.exists(output_file):
-                 os.remove(output_file)
-                 
-        CURRENT_OUTPUT_FILE = final_output
-
-    # Save History (Skip for temp?)
-    if not args.temp:
-        add_to_history(
-            {
-                "prompt": prompt,
-                "optimized_prompt": final_prompt if args.optimize else None,
-                "output_file": final_output,
-                "duration": args.duration,
-                "bpm": args.bpm,
-                "timestamp": datetime.now().isoformat(),
-            }
-        )
-
-    # Output filename
-    print(os.path.basename(final_output))
-
-    # Play
-    if args.play:
-        play_audio(final_output)
+        asyncio.run(async_main(args))
+    except KeyboardInterrupt:
+        # Handled by signal handler, but just in case
+        sys.exit(0)
 
 
 if __name__ == "__main__":

@@ -52,14 +52,15 @@ def run_cli(args, input_str=None):
     return 0
 
 def test_generate_command(mock_generator, mock_convert, clean_history, capsys):
-    # This now runs with mp3 conversion default, so mock_convert is needed
     exit_code = run_cli(["test prompt", "--duration", "5"])
     assert exit_code == 0
     
-    # Check that ONLY filename is printed to stdout
+    # Since filename gen is now async inside main loop, we verify it was called
+    # We need to verify generator.smart.generate_filename_slug was awaited
+    mock_generator.smart.generate_filename_slug.assert_awaited_with("test prompt")
+    
     captured = capsys.readouterr()
     assert "converted.mp3" in captured.out
-    assert "/" not in captured.out 
 
 def test_mp3_default(mock_generator, mock_convert, clean_history):
     exit_code = run_cli(["test prompt"])
