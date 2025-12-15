@@ -15,7 +15,6 @@ warnings.filterwarnings("ignore", category=SyntaxWarning, module="pydub")
 
 # ruff: noqa: E402
 from rich.console import Console
-from rich.table import Table
 
 from .core import MusicGenerator
 from .utils import add_to_history, convert_audio, load_history, play_audio
@@ -46,7 +45,7 @@ def cleanup_handler():
 
 def signal_handler(sig, frame):
     """Handles Ctrl+C gracefully."""
-    console.print("\n[yellow]Stopped by user.[/yellow]")
+    sys.stderr.write("\nStopped by user.\n")
     cleanup_handler()
     sys.exit(0)
 
@@ -60,24 +59,15 @@ def show_history():
     """Show command history."""
     history_data = load_history()
     if not history_data:
-        console.print("No history found.")
+        print("No history found.")
         return
 
-    table = Table(title="Generation History")
-    table.add_column("ID", justify="right", style="cyan", no_wrap=True)
-    table.add_column("Prompt", style="magenta")
-    table.add_column("File", style="green")
-    table.add_column("Date", style="blue")
-
+    print("Generation History:")
+    print("ID  | Prompt")
+    print("----|-------")
     for i, entry in enumerate(history_data):
-        table.add_row(
-            str(i + 1),
-            entry.get("prompt", "N/A"),
-            os.path.basename(entry.get("output_file", "N/A")),
-            entry.get("timestamp", "N/A"),
-        )
-
-    console.print(table)
+        prompt = entry.get("prompt", "N/A")
+        print(f"{i+1:<3} | {prompt}")
 
 
 def init_config():
@@ -87,7 +77,7 @@ def init_config():
     env_file = config_dir / ".env"
 
     if env_file.exists():
-        console.print(f"[yellow]Configuration already exists at {env_file}[/yellow]")
+        sys.stderr.write(f"Configuration already exists at {env_file}\n")
         return
 
     content = (
@@ -102,12 +92,9 @@ def init_config():
     try:
         env_file.write_text(content)
         env_file.chmod(0o600)
-        console.print(f"[green]Created configuration at {env_file}[/green]")
-        console.print(
-            f"Please edit [bold]{env_file}[/bold] with your Google Cloud details."
-        )
+        sys.stderr.write(f"Created configuration at {env_file}\n")
     except Exception as e:
-        console.print(f"[red]Failed to create configuration: {e}[/red]")
+        sys.stderr.write(f"Failed to create configuration: {e}\n")
         sys.exit(1)
 
 
@@ -119,9 +106,9 @@ async def async_main(args):
     try:
         generator = MusicGenerator()
     except Exception as e:
-        console.print(f"[red]Initialization Error:[/red] {e}")
+        sys.stderr.write(f"Initialization Error: {e}\n")
         if "credentials" in str(e).lower():
-             console.print("[yellow]Tip: Run 'gen-music --init'[/yellow]")
+             sys.stderr.write("Tip: Run 'gen-music --init'\n")
         sys.exit(1)
 
     # Live Mode
@@ -131,19 +118,18 @@ async def async_main(args):
             prompt = args.prompt or "ambient electronic"
             
             if args.optimize:
-                console.print("[cyan]✨ Optimizing Live DJ prompt...[/cyan]")
+                sys.stderr.write("Optimizing Live DJ prompt...\n")
                 try:
                     prompt = await generator.smart.optimize_prompt(prompt)
-                    # We don't print it anymore to keep clean UI
                 except Exception as e:
-                    console.print(f"[red]Optimization failed: {e}[/red]")
+                    sys.stderr.write(f"Optimization failed: {e}\n")
 
             dj = LiveDJ(generator)
             await dj.start_session(initial_prompt=prompt)
             return
         except ImportError as e:
-            console.print("[red]Live mode requires extra dependencies.[/red]")
-            console.print(f"Error: {e}")
+            sys.stderr.write("Live mode requires extra dependencies.\n")
+            sys.stderr.write(f"Error: {e}\n")
             return
 
     # Handle Input (Arg vs Pipe)
@@ -159,28 +145,26 @@ async def async_main(args):
     if args.rerun is not None:
         history = load_history()
         if not history or not (1 <= args.rerun <= len(history)):
-            console.print(
-                f"[red]Invalid history ID. Choose between 1 and {len(history)}.[/red]"
+            sys.stderr.write(
+                f"Invalid history ID. Choose between 1 and {len(history)}.\n"
             )
             sys.exit(1)
         entry = history[args.rerun - 1]
         prompt = entry.get("prompt")
-        console.print(
-            f"[yellow]Rerunning history item {args.rerun}: '{prompt}'[/yellow]"
-        )
+        sys.stderr.write(f"Rerunning history item {args.rerun}: '{prompt}'\n")
 
     if not prompt:
-        console.print("[red]Error: No prompt provided via argument or pipe.[/red]")
+        sys.stderr.write("Error: No prompt provided via argument or pipe.\n")
         sys.exit(1)
 
     # Smart Prompt Optimization
     final_prompt = prompt
     if args.optimize:
-        console.print("[cyan]✨ Optimizing prompt with Gemini...[/cyan]")
+        sys.stderr.write("Optimizing prompt with Gemini...\n")
         try:
             final_prompt = await generator.smart.optimize_prompt(prompt)
         except Exception as e:
-            console.print(f"[red]Optimization failed, using original:[/red] {e}")
+            sys.stderr.write(f"Optimization failed, using original: {e}\n")
 
     # Determine Output Filename
     if args.temp:
@@ -205,7 +189,7 @@ async def async_main(args):
             output_file = os.path.join(output_dir, f"{slug}_{timestamp}.wav")
 
     CURRENT_OUTPUT_FILE = output_file
-    console.print("[green]Generating music...[/green]")
+    sys.stderr.write("Generating music...\n")
     
     # Generate
     try:
@@ -217,12 +201,13 @@ async def async_main(args):
         )
         GENERATION_COMPLETE = True
     except Exception as e:
-        console.print(f"[red]Error during generation:[/red] {e}")
+        sys.stderr.write(f"Error during generation: {e}\n")
         sys.exit(1)
 
     # Convert
     final_output = output_file
     if args.format == "mp3":
+        sys.stderr.write("Converting to mp3...\n")
         final_output = convert_audio(output_file, "mp3")
         if IS_TEMP_MODE or not GENERATION_COMPLETE:
              if output_file != final_output and os.path.exists(output_file):
@@ -311,7 +296,7 @@ def main():
         cmd = [sys.executable, "-m", "gen_music.cli"] + [
             arg for arg in sys.argv[1:] if arg not in ("-b", "--background")
         ]
-        console.print("[green]Launching generation in background...[/green]")
+        sys.stderr.write("Launching generation in background...\n")
         subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,
@@ -320,9 +305,6 @@ def main():
         )
         return
 
-    # Check for empty prompt in TTY mode (moved from inside async_main to fail fast)
-    # Actually, async_main handles pipe detection, so we proceed.
-    
     # Run Async Main Loop
     try:
         asyncio.run(async_main(args))

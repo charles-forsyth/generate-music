@@ -6,12 +6,7 @@ import aioconsole
 import numpy as np
 import sounddevice as sd
 from google.genai import types
-from rich.console import Console, Group
-from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
 
-console = Console()
 
 class LiveDJ:
     def __init__(self, generator):
@@ -38,46 +33,19 @@ class LiveDJ:
         self.current_prompts = [types.WeightedPrompt(text=initial_prompt, weight=1.0)]
         self.playback_started.clear()
         
-        # Enhanced Startup UI - Nuclear Option for Safety
-        # We use a Group to render components separately so markup doesn't bleed/break.
-        
-        # 1. Prompt Section (Raw text, no markup parsing for content)
-        clean_prompt = initial_prompt.replace("\n", " ").strip()
-        if len(clean_prompt) > 200:
-            display_prompt = clean_prompt[:197] + "..."
-        else:
-            display_prompt = clean_prompt
-            
-        prompt_text = Text.assemble(
-            ("Initial Prompt: ", "bold cyan"),
-            (display_prompt, "white"),
-            ("\n\n", "white"),
-            ("BPM: ", "bold cyan"),
-            (f"{self.current_bpm}", "white"),
-            ("\n\n", "white")
-        )
-
-        # 2. Commands Section (Safe static markup)
-        commands_text = Text.from_markup(
-            "[bold white]Available Commands:[/bold white]\n"
-            "• [green]add <text> [weight][/green] : Add a new layer ('add drums')\n"
-            "• [green]bpm <number>[/green]        : Change tempo (resets audio)\n"
-            "• [green]list[/green]                : Show active prompts\n"
-            "• [green]clear[/green]               : Remove all prompts\n"
-            "• [green]quit[/green]                : Exit session\n\n"
-            "[dim]💡 Tip: Try adding instruments like 'add violin'.\n"
-            "   Use negative weight to remove elements (e.g. 'add drums -1.0').[/dim]"
-        )
-
-        # 3. Render Group in Panel
-        console.print(Panel(
-            Group(prompt_text, commands_text),
-            title="[bold green]🎵 Gen-Music Live DJ Console 🎵[/bold green]",
-            expand=False,
-            border_style="green"
-        ))
-        
-        console.print("[dim]Buffering audio stream...[/dim]")
+        # Simplified Text UI
+        print("\n=== Gen-Music Live DJ Console ===")
+        print(f"Initial Prompt: {initial_prompt}")
+        print(f"BPM: {self.current_bpm}")
+        print("---------------------------------")
+        print("Commands:")
+        print("  add <text> [weight]  : Add layer (e.g. 'add drums')")
+        print("  bpm <number>         : Change tempo")
+        print("  list                 : Show prompts")
+        print("  clear                : Clear prompts")
+        print("  quit                 : Exit")
+        print("---------------------------------")
+        print("Buffering audio stream...\n")
 
         # Start Stream
         stream = sd.OutputStream(
@@ -122,11 +90,11 @@ class LiveDJ:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            console.print(f"[red]Session Error:[/red] {e}")
+            print(f"Session Error: {e}")
         finally:
             stream.stop()
             stream.close()
-            console.print("[yellow]Session Ended.[/yellow]")
+            print("\nSession Ended.")
 
     async def _api_producer(self, session):
         """Receives audio chunks from API and puts them in the queue."""
@@ -146,17 +114,17 @@ class LiveDJ:
                         if not self.playback_started.is_set():
                             if self.audio_queue.qsize() >= self.buffer_threshold:
                                 self.playback_started.set()
-                                console.print("[bold green]▶ Now Playing[/bold green]")
+                                print("▶ Now Playing")
 
         except asyncio.CancelledError:
             pass
         except Exception as e:
             if self.is_running:
-                console.print(f"[red]API Error:[/red] {e}")
+                print(f"API Error: {e}")
 
     def _audio_consumer(self):
         """Reads from queue and writes to sounddevice (Blocking)."""
-        self.playback_started.wait() 
+        self.playback_started.wait()
         
         with sd.OutputStream(
             samplerate=self.sample_rate,
@@ -175,7 +143,7 @@ class LiveDJ:
                 except queue.Empty:
                     continue
                 except Exception as e:
-                    console.print(f"[red]Playback Error:[/red] {e}")
+                    print(f"Playback Error: {e}")
                     break
 
     async def _input_loop(self, session):
@@ -201,34 +169,18 @@ class LiveDJ:
             self.is_running = False
             
         elif cmd == "help":
-            # Richer Help Table
-            grid = Table(title="Live DJ Commands", border_style="cyan")
-            grid.add_column("Command", style="green")
-            grid.add_column("Arguments", style="yellow")
-            grid.add_column("Description", style="white")
-            
-            grid.add_row("add", "text [weight]", "Add/Update layer (def 1.0)")
-            grid.add_row("", "", "[dim]Ex: 'add drums 1.5' or 'add vocals -1.0'[/dim]")
-            grid.add_row("bpm", "number", "Change tempo (resets stream)")
-            grid.add_row("list", "", "Show active prompts")
-            grid.add_row("clear", "", "Remove all prompts")
-            grid.add_row("quit", "", "End session")
-            
-            console.print(grid)
-            console.print(
-                "\n[bold]Tips:[/bold]\n"
-                "• Changes crossfade smoothly over a few seconds.\n"
-                "• Changing BPM causes a hard reset (brief silence).\n"
-                "• Use negative weights to suppress instruments."
-            )
+            print("Commands:")
+            print("  add <text> [weight]  : Add layer")
+            print("  bpm <number>         : Change tempo")
+            print("  list                 : Show prompts")
+            print("  clear                : Clear prompts")
+            print("  quit                 : Exit")
 
         elif cmd == "bpm":
             if args and args[0].isdigit():
                 new_bpm = int(args[0])
                 self.current_bpm = new_bpm
-                console.print(
-                    f"[yellow]Changing BPM to {new_bpm} (Resets Context)...[/yellow]"
-                )
+                print(f"Changing BPM to {new_bpm} (Resets Context)...")
                 await session.set_music_generation_config(
                     config=types.LiveMusicGenerationConfig(bpm=new_bpm)
                 )
@@ -238,16 +190,12 @@ class LiveDJ:
             text = " ".join(args)
             weight = 1.0
             
-            # Check for weight argument at the end
             last_arg = args[-1] if args else ""
             is_weight = False
             
-            # Check positive float
             if last_arg.replace('.', '', 1).isdigit():
                 is_weight = True
-            # Check negative float
             elif last_arg.startswith('-'):
-                # Split check to avoid long line
                 if last_arg[1:].replace('.', '', 1).isdigit():
                     is_weight = True
                 
@@ -262,21 +210,18 @@ class LiveDJ:
                 self.current_prompts.append(
                     types.WeightedPrompt(text=text, weight=weight)
                 )
-                console.print(f"[green]Adding:[/green] '{text}' (weight: {weight})")
+                print(f"Adding: '{text}' (weight: {weight})")
                 await session.set_weighted_prompts(prompts=self.current_prompts)
 
         elif cmd == "clear":
             self.current_prompts = []
-            console.print("[yellow]Prompts cleared.[/yellow]")
+            print("Prompts cleared.")
             await session.set_weighted_prompts(prompts=[])
             
         elif cmd == "list":
-            table = Table(title="Active Prompts")
-            table.add_column("Layer", style="cyan")
-            table.add_column("Weight", style="magenta")
-            for p in self.current_prompts:
-                table.add_row(p.text, str(p.weight))
-            console.print(table)
+            print("Active Prompts:")
+            for i, p in enumerate(self.current_prompts):
+                print(f"  {i+1}. {p.text} ({p.weight})")
                 
         else:
-            console.print("[red]Unknown command. Type 'help' for list.[/red]")
+            print("Unknown command. Type 'help' for list.")
