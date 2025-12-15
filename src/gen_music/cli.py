@@ -200,6 +200,16 @@ def main():
         try:
             from .live import LiveDJ
             prompt = args.prompt or "ambient electronic"
+            
+            # Optimize prompt if requested
+            if args.optimize:
+                console.print("[cyan]✨ Optimizing Live DJ prompt...[/cyan]")
+                try:
+                    prompt = asyncio.run(generator.smart.optimize_prompt(prompt))
+                    console.print(f"[dim]Optimized: {prompt}[/dim]")
+                except Exception as e:
+                    console.print(f"[red]Optimization failed: {e}[/red]")
+
             dj = LiveDJ(generator)
             asyncio.run(dj.start_session(initial_prompt=prompt))
             return
