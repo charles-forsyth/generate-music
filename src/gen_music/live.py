@@ -7,9 +7,9 @@ import numpy as np
 import sounddevice as sd
 from google.genai import types
 from rich.console import Console
-from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 console = Console()
 
@@ -39,8 +39,21 @@ class LiveDJ:
         self.playback_started.clear()
         
         # Enhanced Startup UI
+        # Truncate prompt to prevent UI overflow and markup errors
+        clean_prompt = initial_prompt.replace("\n", " ").strip()
+        if len(clean_prompt) > 200:
+            display_prompt = clean_prompt[:197] + "..."
+        else:
+            display_prompt = clean_prompt
+
+        # Use Text object for safe rendering of variable content
+        prompt_text = Text.assemble(
+            ("Initial Prompt: ", "bold cyan"),
+            (display_prompt, "white")
+        )
+        
         welcome_text = (
-            f"[bold cyan]Initial Prompt:[/bold cyan] {escape(initial_prompt)}\n"
+            f"{prompt_text.markup}\n"
             f"[bold cyan]BPM:[/bold cyan] {self.current_bpm}\n\n"
             "[bold white]Available Commands:[/bold white]\n"
             "• [green]add <text> [weight][/green] : Add layer (e.g. 'add drums')\n"
