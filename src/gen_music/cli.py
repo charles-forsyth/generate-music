@@ -6,13 +6,8 @@ import signal
 import subprocess
 import sys
 import tempfile
-import warnings
 from datetime import datetime
 from pathlib import Path
-
-# Suppress warnings
-warnings.filterwarnings("ignore", category=SyntaxWarning, module="pydub")
-warnings.filterwarnings("ignore", module="google.genai")
 
 # ruff: noqa: E402
 from .core import MusicGenerator

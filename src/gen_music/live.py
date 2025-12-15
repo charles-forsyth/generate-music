@@ -1,15 +1,12 @@
 import asyncio
 import queue
 import threading
-import warnings
 
 import aioconsole
 import numpy as np
 import sounddevice as sd
 from google.genai import types
 
-# Filter warnings here too to ensure Live Mode is clean
-warnings.filterwarnings("ignore", module="google.genai")
 
 class LiveDJ:
     def __init__(self, generator):
