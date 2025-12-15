@@ -6,7 +6,7 @@ import aioconsole
 import numpy as np
 import sounddevice as sd
 from google.genai import types
-from rich.console import Console
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -38,35 +38,40 @@ class LiveDJ:
         self.current_prompts = [types.WeightedPrompt(text=initial_prompt, weight=1.0)]
         self.playback_started.clear()
         
-        # Enhanced Startup UI
-        # Truncate prompt to prevent UI overflow and markup errors
+        # Enhanced Startup UI - Nuclear Option for Safety
+        # We use a Group to render components separately so markup doesn't bleed/break.
+        
+        # 1. Prompt Section (Raw text, no markup parsing for content)
         clean_prompt = initial_prompt.replace("\n", " ").strip()
         if len(clean_prompt) > 200:
             display_prompt = clean_prompt[:197] + "..."
         else:
             display_prompt = clean_prompt
-
-        # Use Text object for safe rendering of variable content
+            
         prompt_text = Text.assemble(
             ("Initial Prompt: ", "bold cyan"),
-            (display_prompt, "white")
+            (display_prompt, "white"),
+            ("\n\n", "white"),
+            ("BPM: ", "bold cyan"),
+            (f"{self.current_bpm}", "white"),
+            ("\n\n", "white")
         )
-        
-        welcome_text = (
-            f"{prompt_text.markup}\n"
-            f"[bold cyan]BPM:[/bold cyan] {self.current_bpm}\n\n"
+
+        # 2. Commands Section (Safe static markup)
+        commands_text = Text.from_markup(
             "[bold white]Available Commands:[/bold white]\n"
-            "• [green]add <text> [weight][/green] : Add layer (e.g. 'add drums')\n"
+            "• [green]add <text> [weight][/green] : Add a new layer ('add drums')\n"
             "• [green]bpm <number>[/green]        : Change tempo (resets audio)\n"
             "• [green]list[/green]                : Show active prompts\n"
             "• [green]clear[/green]               : Remove all prompts\n"
             "• [green]quit[/green]                : Exit session\n\n"
-            "   Use negative weight to remove elements (e.g. 'add drums -1.0').[/dim]"
+            "[dim]💡 Tip: Try adding instruments like 'add violin'.\n"
             "   Use negative weight to remove elements (e.g. 'add drums -1.0').[/dim]"
         )
-        
+
+        # 3. Render Group in Panel
         console.print(Panel(
-            welcome_text,
+            Group(prompt_text, commands_text),
             title="[bold green]🎵 Gen-Music Live DJ Console 🎵[/bold green]",
             expand=False,
             border_style="green"
