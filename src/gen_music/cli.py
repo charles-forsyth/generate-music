@@ -1,7 +1,6 @@
 import argparse
 import asyncio
 import os
-import re
 import subprocess
 import sys
 import warnings
@@ -18,7 +17,8 @@ from rich.table import Table
 from .core import MusicGenerator
 from .utils import add_to_history, convert_audio, load_history, play_audio
 
-console = Console()
+# Create console for stderr (logs/status)
+console = Console(stderr=True)
 
 
 def show_history():
@@ -66,7 +66,6 @@ def init_config():
 
     try:
         env_file.write_text(content)
-        # Set permissions to read/write only for the user (600)
         env_file.chmod(0o600)
         console.print(f"[green]Created configuration at {env_file}[/green]")
         console.print(
@@ -113,6 +112,9 @@ def main():
     parser.add_argument(
         "-b", "--background", action="store_true", help="Run in background."
     )
+    parser.add_argument(
+        "--optimize", action="store_true", help="Use Gemini to optimize the prompt."
+    )
 
     args = parser.parse_args()
 
@@ -128,11 +130,9 @@ def main():
 
     # Background Execution Logic
     if args.background:
-        # Reconstruct the command without the --background flag
         cmd = [sys.executable, "-m", "gen_music.cli"] + [
             arg for arg in sys.argv[1:] if arg not in ("-b", "--background")
         ]
-        
         console.print("[green]Launching generation in background...[/green]")
         subprocess.Popen(
             cmd,
@@ -142,9 +142,18 @@ def main():
         )
         return
 
-    # Handle Rerun Logic or New Prompt
+    # Handle Input (Arg vs Pipe)
     prompt = args.prompt
+    
+    # Check for piped input if no prompt argument
+    if not prompt and not sys.stdin.isatty():
+        try:
+            # Read from stdin
+            prompt = sys.stdin.read().strip()
+        except Exception:
+            pass
 
+    # Rerun Logic overrides prompt
     if args.rerun is not None:
         history = load_history()
         if not history or not (1 <= args.rerun <= len(history)):
@@ -159,28 +168,54 @@ def main():
         )
 
     if not prompt:
-        parser.error("the following arguments are required: prompt")
+        if sys.stdin.isatty():
+            parser.print_help()
+            sys.exit(1)
+        else:
+            console.print("[red]Error: No prompt provided via argument or pipe.[/red]")
+            sys.exit(1)
 
-    # Default Output Filename
+    # Initialize Generator
+    try:
+        generator = MusicGenerator()
+    except Exception as e:
+        console.print(f"[red]Initialization Error:[/red] {e}")
+        if "credentials" in str(e).lower():
+             console.print("[yellow]Tip: Run 'gen-music --init'[/yellow]")
+        sys.exit(1)
+
+    # Smart Prompt Optimization
+    final_prompt = prompt
+    if args.optimize:
+        console.print("[cyan]✨ Optimizing prompt with Gemini...[/cyan]")
+        try:
+            final_prompt = asyncio.run(generator.smart.optimize_prompt(prompt))
+            console.print(f"[dim]Optimized: {final_prompt}[/dim]")
+        except Exception as e:
+            console.print(f"[red]Optimization failed, using original:[/red] {e}")
+
+    # Determine Output Filename
     output_file = args.output
     if not output_file:
         output_dir = os.path.join(os.path.expanduser("~"), "Music")
         os.makedirs(output_dir, exist_ok=True)
-
-        sane_prompt = re.sub(r"[^a-zA-Z0-9_]+", "_", prompt)
-        prompt_part = (
-            "_".join(sane_prompt.split("_")[:5]).strip("_") or "generated_music"
-        )
+        
+        # Smart Filename Generation (Always On)
+        try:
+            slug = asyncio.run(generator.smart.generate_filename_slug(final_prompt))
+        except Exception:
+            slug = "generated_music"
+            
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # Always generate initially as wav, convert later if needed
-        output_file = os.path.join(output_dir, f"{prompt_part}_{timestamp}.wav")
+        output_file = os.path.join(output_dir, f"{slug}_{timestamp}.wav")
 
+    console.print("[green]Generating music...[/green]")
+    
     # Generate
-    generator = MusicGenerator()
     try:
         asyncio.run(
             generator.generate(
-                prompt=prompt,
+                prompt=final_prompt,
                 output_file=output_file,
                 duration=args.duration,
                 bpm=args.bpm,
@@ -188,11 +223,6 @@ def main():
         )
     except Exception as e:
         console.print(f"[red]Error during generation:[/red] {e}")
-        # Hint at configuration if authentication fails
-        if "401" in str(e) or "credentials" in str(e).lower():
-            console.print(
-                "\n[yellow]Tip: Run 'gen-music --init' to set up credentials.[/yellow]"
-            )
         sys.exit(1)
 
     # Convert if requested
@@ -204,12 +234,16 @@ def main():
     add_to_history(
         {
             "prompt": prompt,
+            "optimized_prompt": final_prompt if args.optimize else None,
             "output_file": final_output,
             "duration": args.duration,
             "bpm": args.bpm,
             "timestamp": datetime.now().isoformat(),
         }
     )
+
+    # Output ONLY the path to stdout (for piping to other tools)
+    print(final_output)
 
     # Play
     if args.play:

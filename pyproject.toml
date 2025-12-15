@@ -1,6 +1,6 @@
 [project]
 name = "gen-music"
-version = "0.1.0"
+version = "0.2.0"
 description = "A modern CLI for generating music using Google's Vertex AI Lyria model."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -11,12 +11,12 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "pygame>=2.5.0",
     "rich>=13.0.0",
+    "requests>=2.20.0",
+    "google-auth>=2.0.0",
+    "pydub>=0.25.1",
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "ruff>=0.1.0",
-    "requests>=2.32.5",
-    "google-auth>=2.43.0",
-    "pydub>=0.25.1",
 ]
 
 [project.scripts]

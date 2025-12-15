@@ -8,6 +8,54 @@ from google.genai import types
 from .config import get_settings
 
 
+class SmartAssistant:
+    """Helper class to use Gemini Flash for text tasks."""
+    
+    def __init__(self, client: genai.Client):
+        self.client = client
+        self.model_id = "models/gemini-2.0-flash-exp"
+
+    async def generate_filename_slug(self, prompt: str) -> str:
+        """Generates a safe, short filename slug from the prompt."""
+        try:
+            # Construct prompt for filename generation
+            contents = (
+                "Generate a short, lowercase, underscore-separated filename slug "
+                "(max 5 words, no extension) for a music file described as: "
+                f"'{prompt}'. Output ONLY the slug."
+            )
+            response = await self.client.aio.models.generate_content(
+                model=self.model_id,
+                contents=contents,
+            )
+            slug = response.text.strip().lower()
+            # Basic sanitization
+            return "".join(c for c in slug if c.isalnum() or c == "_")
+        except Exception as e:
+            # Fallback if Gemini fails
+            print(f"Smart filename generation failed: {e}")
+            return "generated_music"
+
+    async def optimize_prompt(self, prompt: str) -> str:
+        """Rewrites the prompt to be more descriptive for a music model."""
+        try:
+            # Construct prompt for optimization
+            contents = (
+                "You are an expert music producer. Rewrite the following user request "
+                "into a detailed, high-quality music generation prompt for the Lyria "
+                "model. Focus on instruments, mood, tempo, genre, and texture. "
+                f"Output ONLY the rewritten prompt.\n\nUser Request: '{prompt}'"
+            )
+            response = await self.client.aio.models.generate_content(
+                model=self.model_id,
+                contents=contents,
+            )
+            return response.text.strip()
+        except Exception as e:
+            print(f"Prompt optimization failed: {e}")
+            return prompt
+
+
 class MusicGenerator:
     def __init__(self):
         self.settings = get_settings()
@@ -32,6 +80,9 @@ class MusicGenerator:
                 "Invalid Configuration: You must provide either a GOOGLE_API_KEY "
                 "or a PROJECT_ID in your .env configuration."
             )
+        
+        # Initialize Smart Assistant
+        self.smart = SmartAssistant(self.client)
 
     async def generate(
         self,
@@ -44,22 +95,12 @@ class MusicGenerator:
     ):
         """
         Generates music using the Lyria RealTime model.
-
-        Args:
-            prompt: Text description of the music.
-            output_file: Path to save the WAV file.
-            duration: Duration in seconds.
-            bpm: Beats per minute.
-            temperature: Creativity control.
-            negative_prompt: (Currently unused for RealTime API).
         """
 
         # Audio configuration
         CHANNELS = 2
         SAMPLE_WIDTH = 2  # 16-bit = 2 bytes
         FRAME_RATE = 48000
-
-        print(f"Starting generation: '{prompt}' for {duration}s at {bpm} BPM...")
 
         async def receive_audio(session, wave_file):
             """Background task to receive and write audio."""
@@ -77,9 +118,7 @@ class MusicGenerator:
                             if chunk:
                                 wave_file.writeframes(chunk)
                                 total_bytes += len(chunk)
-                                # Simple progress indicator
-                                print(".", end="", flush=True)
-
+                                
                                 if total_bytes >= target_bytes:
                                     return
 
@@ -110,7 +149,6 @@ class MusicGenerator:
                 )
 
                 # Send prompt
-                # If we had multiple, we could list them. Using single prompt for now.
                 await session.set_weighted_prompts(
                     prompts=[
                         types.WeightedPrompt(text=prompt, weight=1.0),
@@ -120,11 +158,5 @@ class MusicGenerator:
                 # Start playing
                 await session.play()
 
-                # Wait for the duration (managed by the receiver task checking bytes,
-                # but we also need to wait here or just wait on the receiver task?)
-                # The receiver task returns when done.
+                # Wait for completion
                 await receiver_task
-
-                # Stop session
-                # await session.stop() # Implicitly handled by context manager
-                print(f"\nGeneration complete! Saved to {output_file}")
