@@ -107,7 +107,7 @@ def main():
         help="Initialize configuration in ~/.config/gen-music/",
     )
     parser.add_argument(
-        "-f", "--format", choices=["wav", "mp3"], default="wav", help="Output format."
+        "-f", "--format", choices=["wav", "mp3"], default="mp3", help="Output format."
     )
     parser.add_argument(
         "-b", "--background", action="store_true", help="Run in background."
@@ -207,6 +207,7 @@ def main():
             slug = "generated_music"
             
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Always generate initially as wav, convert later
         output_file = os.path.join(output_dir, f"{slug}_{timestamp}.wav")
 
     console.print("[green]Generating music...[/green]")
@@ -225,7 +226,7 @@ def main():
         console.print(f"[red]Error during generation:[/red] {e}")
         sys.exit(1)
 
-    # Convert if requested
+    # Convert if requested (Default MP3)
     final_output = output_file
     if args.format == "mp3":
         final_output = convert_audio(output_file, "mp3")
@@ -242,8 +243,8 @@ def main():
         }
     )
 
-    # Output ONLY the path to stdout (for piping to other tools)
-    print(final_output)
+    # Output ONLY the filename to stdout (for piping to other tools)
+    print(os.path.basename(final_output))
 
     # Play
     if args.play:
