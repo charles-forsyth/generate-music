@@ -7,6 +7,7 @@ import numpy as np
 import sounddevice as sd
 from google.genai import types
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -39,7 +40,7 @@ class LiveDJ:
         
         # Enhanced Startup UI
         welcome_text = (
-            f"[bold cyan]Initial Prompt:[/bold cyan] {initial_prompt}\n"
+            f"[bold cyan]Initial Prompt:[/bold cyan] {escape(initial_prompt)}\n"
             f"[bold cyan]BPM:[/bold cyan] {self.current_bpm}\n\n"
             "[bold white]Available Commands:[/bold white]\n"
             "• [green]add <text> [weight][/green] : Add layer (e.g. 'add drums')\n"
