@@ -37,46 +37,34 @@ def mock_settings():
 
 @pytest.mark.asyncio
 async def test_generate_music(mock_genai_client, mock_settings, tmp_path):
-    client_mock, session_mock = mock_genai_client
-    
-    # Mock receive to yield one chunk of audio
-    # The structure is message.server_content.audio_chunks[0].data
-    mock_chunk = b'\x00\x00' * 100 # 100 frames of silence
-    
-    mock_message = MagicMock()
-    mock_message.server_content.audio_chunks = [MagicMock(data=mock_chunk)]
-    
-    async def fake_receive():
-        yield mock_message
-        # Sleep briefly to allow the loop to be cancelled or exit
-        await asyncio.sleep(0.001)
-        
-    session_mock.receive.side_effect = fake_receive
+    client_mock, _ = mock_genai_client
+    mock_settings.song_model_id = "auto"
+    part = MagicMock()
+    part.inline_data.data = b"ID3fake-mp3"
+    part.inline_data.mime_type = "audio/mpeg"
+    resp = MagicMock()
+    resp.candidates = [MagicMock(content=MagicMock(parts=[part]))]
+    client_mock.aio.models.generate_content = AsyncMock(return_value=resp)
 
-    output_file = tmp_path / "test_output.wav"
-    
+    output_file = tmp_path / "test_output.mp3"
     generator = MusicGenerator()
-    # We use a very short duration so the loop condition (bytes target) is met quickly
-    # 100 frames at 48k is tiny duration.
-    # The code calculates target_bytes = duration * FRAME_RATE * ...
-    # Override duration to be small.
-    
-    # Actually, the loop continues until total_bytes >= target_bytes.
-    # If duration=1 (default arg in test), target is huge.
-    # We should pass a tiny duration.
-    # 100 frames / 48000 ~ 0.002 seconds.
-    
-    await generator.generate(
-        prompt="test prompt",
-        output_file=str(output_file),
-        duration=0.01, # Should be enough to cover the chunk
-        bpm=120
-    )
-    
-    # Verify file was created
-    assert output_file.exists()
-    
-    # Verify calls
-    session_mock.set_music_generation_config.assert_called_once()
-    session_mock.set_weighted_prompts.assert_called_once()
-    session_mock.play.assert_called_once()
+    await generator.generate(prompt="test prompt", output_file=str(output_file), duration=10)
+
+    assert output_file.read_bytes() == b"ID3fake-mp3"
+    kwargs = client_mock.aio.models.generate_content.call_args.kwargs
+    assert kwargs["model"] == "lyria-3-clip-preview"
+    assert "test prompt" in kwargs["contents"]
+
+
+@pytest.mark.asyncio
+async def test_generate_long_uses_lyria_35(mock_genai_client, mock_settings, tmp_path):
+    client_mock, _ = mock_genai_client
+    mock_settings.song_model_id = "auto"
+    part = MagicMock()
+    part.inline_data.data = b"ID3x"
+    part.inline_data.mime_type = "audio/mpeg"
+    resp = MagicMock()
+    resp.candidates = [MagicMock(content=MagicMock(parts=[part]))]
+    client_mock.aio.models.generate_content = AsyncMock(return_value=resp)
+    await MusicGenerator().generate("p", str(tmp_path / "o.mp3"), duration=90)
+    assert client_mock.aio.models.generate_content.call_args.kwargs["model"] == "lyria-3.5"

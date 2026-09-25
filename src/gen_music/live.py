@@ -12,7 +12,7 @@ class LiveDJ:
     def __init__(self, generator):
         self.generator = generator
         self.client = generator.client
-        self.model_id = generator.settings.model_id
+        self.model_id = generator.settings.live_model_id
         self.is_running = False
         self.current_bpm = 120
         self.current_prompts = []
