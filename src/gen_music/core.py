@@ -108,20 +108,30 @@ class MusicGenerator:
         )
         if negative_prompt:
             text += f" Avoid: {negative_prompt}."
-        response = await self.client.aio.models.generate_content(
-            model=model,
-            contents=text,
-            config=types.GenerateContentConfig(
-                response_modalities=["AUDIO"], temperature=temperature
-            ),
-        )
         audio = None
-        for part in response.candidates[0].content.parts:
-            if part.inline_data and part.inline_data.data:
-                audio = part.inline_data
+        finish = None
+        for _attempt in range(3):
+            response = await self.client.aio.models.generate_content(
+                model=model,
+                contents=text,
+                config=types.GenerateContentConfig(
+                    response_modalities=["AUDIO"], temperature=temperature
+                ),
+            )
+            cand = response.candidates[0] if response.candidates else None
+            finish = getattr(cand, "finish_reason", None)
+            parts = (cand.content.parts or []) if cand and cand.content else []
+            for part in parts:
+                if part.inline_data and part.inline_data.data:
+                    audio = part.inline_data
+                    break
+            if audio is not None:
                 break
         if audio is None:
-            raise RuntimeError(f"{model} returned no audio.")
+            raise RuntimeError(
+                f"{model} returned no audio after 3 tries (finish_reason={finish}). "
+                "Try rewording the prompt."
+            )
         if output_file.lower().endswith(".wav") and "mpeg" in (audio.mime_type or ""):
             import io
 
