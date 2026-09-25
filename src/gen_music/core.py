@@ -1,5 +1,3 @@
-import asyncio
-import wave
 from typing import Optional
 
 from google import genai
