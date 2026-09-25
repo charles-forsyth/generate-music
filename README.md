@@ -5,7 +5,7 @@
 ![License](https://img.shields.io/github/license/charles-forsyth/generate-music)
 ![Code Style](https://img.shields.io/badge/code%20style-black-000000.svg)
 
-**Gen-Music** is a modern, professional command-line interface (CLI) for generating high-quality music in real-time using Google's state-of-the-art **Vertex AI Lyria model**.
+**Gen-Music** is a CLI for generating music with Google's **Lyria** models: `lyria-3.5` for full-length tracks, `lyria-3-clip-preview` for clips up to 30 s (Clip always returns ~30 s), and `lyria-realtime-exp` for the interactive `--live` DJ mode. Set `SONG_MODEL_ID` (default `auto`) and `LIVE_MODEL_ID` in `~/.config/gen-music/.env`.
 
 ## 🚀 Installation
 

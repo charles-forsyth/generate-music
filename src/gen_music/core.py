@@ -1,5 +1,3 @@
-import asyncio
-import wave
 from typing import Optional
 
 from google import genai
@@ -13,7 +11,7 @@ class SmartAssistant:
     
     def __init__(self, client: genai.Client):
         self.client = client
-        self.model_id = "models/gemini-2.0-flash-exp"
+        self.model_id = "gemini-3.8-flash"
 
     async def generate_filename_slug(self, prompt: str) -> str:
         """Generates a safe, short filename slug from the prompt."""
@@ -95,70 +93,43 @@ class MusicGenerator:
         temperature: float = 1.0,
         negative_prompt: Optional[str] = None,
     ):
+        """Generate a track with Lyria 3.5 (or lyria-3-clip-preview for <=30 s).
+
+        Lyria 3.5/3 Clip return a finished MP3 from one generate_content call.
+        The result is written to output_file (converted to WAV if the name ends
+        in .wav). Live DJ mode still uses the realtime model (settings.live_model_id).
         """
-        Generates music using the Lyria RealTime model.
-        """
+        model = self.settings.song_model_id
+        if model == "auto":
+            model = "lyria-3-clip-preview" if duration <= 30 else "lyria-3.5"
+        text = (
+            f"{prompt}. Instrumental only, no vocals. About {duration} seconds long, "
+            f"around {bpm} BPM."
+        )
+        if negative_prompt:
+            text += f" Avoid: {negative_prompt}."
+        response = await self.client.aio.models.generate_content(
+            model=model,
+            contents=text,
+            config=types.GenerateContentConfig(
+                response_modalities=["AUDIO"], temperature=temperature
+            ),
+        )
+        audio = None
+        for part in response.candidates[0].content.parts:
+            if part.inline_data and part.inline_data.data:
+                audio = part.inline_data
+                break
+        if audio is None:
+            raise RuntimeError(f"{model} returned no audio.")
+        if output_file.lower().endswith(".wav") and "mpeg" in (audio.mime_type or ""):
+            import io
 
-        # Audio configuration
-        CHANNELS = 2
-        SAMPLE_WIDTH = 2  # 16-bit = 2 bytes
-        FRAME_RATE = 48000
+            from pydub import AudioSegment
 
-        async def receive_audio(session, wave_file):
-            """Background task to receive and write audio."""
-            total_bytes = 0
-            target_bytes = duration * FRAME_RATE * CHANNELS * SAMPLE_WIDTH
-
-            try:
-                while True:
-                    async for message in session.receive():
-                        if (
-                            message.server_content
-                            and message.server_content.audio_chunks
-                        ):
-                            chunk = message.server_content.audio_chunks[0].data
-                            if chunk:
-                                wave_file.writeframes(chunk)
-                                total_bytes += len(chunk)
-                                
-                                if total_bytes >= target_bytes:
-                                    return
-
-                    await asyncio.sleep(0.01)
-            except asyncio.CancelledError:
-                pass
-
-        # Prepare wave file
-        with wave.open(output_file, "wb") as wf:
-            wf.setnchannels(CHANNELS)
-            wf.setsampwidth(SAMPLE_WIDTH)
-            wf.setframerate(FRAME_RATE)
-
-            async with (
-                self.client.aio.live.music.connect(
-                    model=self.settings.model_id
-                ) as session,
-                asyncio.TaskGroup() as tg,
-            ):
-                # Start receiver
-                receiver_task = tg.create_task(receive_audio(session, wf))
-
-                # Send configuration
-                await session.set_music_generation_config(
-                    config=types.LiveMusicGenerationConfig(
-                        bpm=bpm, temperature=temperature
-                    )
-                )
-
-                # Send prompt
-                await session.set_weighted_prompts(
-                    prompts=[
-                        types.WeightedPrompt(text=prompt, weight=1.0),
-                    ]
-                )
-
-                # Start playing
-                await session.play()
-
-                # Wait for completion
-                await receiver_task
+            AudioSegment.from_file(io.BytesIO(audio.data), format="mp3").export(
+                output_file, format="wav"
+            )
+        else:
+            with open(output_file, "wb") as f:
+                f.write(audio.data)

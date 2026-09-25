@@ -79,7 +79,8 @@ def init_config():
         "# Gen-Music Configuration\n"
         "PROJECT_ID=your-google-cloud-project-id\n"
         "LOCATION=us-central1\n"
-        "MODEL_ID=models/lyria-realtime-exp\n"
+        "SONG_MODEL_ID=auto\n"
+        "LIVE_MODEL_ID=models/lyria-realtime-exp\n"
         "# Optional: Only required if not using 'gcloud auth application-default'\n"
         "# GOOGLE_API_KEY=your-api-key\n"
     )
@@ -235,7 +236,7 @@ def main():
         "-o", "--output", help="Output filename."
     )
     parser.add_argument(
-        "-d", "--duration", type=int, default=10, help="Duration in seconds."
+        "-d", "--duration", type=int, default=10, help="Target duration in seconds (<=30 uses Lyria 3 Clip, which returns ~30 s; longer uses Lyria 3.5)."
     )
     parser.add_argument(
         "--bpm", type=int, default=120, help="Beats per minute."
