@@ -1,5 +1,7 @@
 # Gen-Music CLI
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23755687.svg)](https://doi.org/10.5281/zenodo.23755687)
+
 ![CI](https://github.com/charles-forsyth/generate-music/actions/workflows/ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)
 ![License](https://img.shields.io/github/license/charles-forsyth/generate-music)
